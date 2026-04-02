@@ -1,4 +1,4 @@
-.PHONY: setup extract-frames crop-students split-data train-baseline evaluate-baseline generate-telemetry generate-gradcam publish-model
+.PHONY: setup extract-frames crop-students split-data train-baseline evaluate-baseline generate-telemetry generate-gradcam publish-model deploy-space
 
 setup:
 	pip install -r requirements.txt
@@ -26,3 +26,6 @@ generate-gradcam:
 
 publish-model:
 	python src/models/publish_to_huggingface.py
+
+deploy-space:
+	python src/models/create_hf_space.py

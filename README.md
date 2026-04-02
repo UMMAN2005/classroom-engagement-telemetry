@@ -9,6 +9,10 @@ Raw Videos → Frame Extraction → Person Detection/Cropping → Train/Val/Test
 → MobileNetV2 Training → Evaluation → Engagement Telemetry Dashboard
 ```
 
+## Live Demo
+
+Try the model interactively with Grad-CAM visualization: [Hugging Face Space](https://huggingface.co/spaces/ummanmm/Classroom-Engagement-Demo)
+
 ## Setup
 
 ```bash
@@ -56,6 +60,7 @@ classroom_engagement_telemetry/
 │   ├── models/
 │   │   ├── train_baseline.py           # MobileNetV2 training with weighted loss
 │   │   ├── publish_to_huggingface.py   # Upload weights to Hugging Face Hub
+│   │   ├── create_hf_space.py         # Deploy Gradio Space to Hugging Face
 │   │   ├── best_baseline.pth           # Saved best weights (git-ignored)
 │   │   └── yolov8n.pt                  # YOLOv8-nano detector (git-ignored, auto-downloads)
 │   └── eval/
