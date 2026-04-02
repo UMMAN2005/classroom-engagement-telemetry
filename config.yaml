@@ -1,0 +1,23 @@
+project:
+  name: "classroom_engagement_telemetry"
+  random_seed: 42
+
+data:
+  video_dir: "data/raw_videos"
+  extracted_frames_dir: "data/extracted_frames"
+  cropped_persons_dir: "data/crops"
+  frame_interval_seconds: 10
+
+split:
+  train_videos: ["video_1_audioremoved.mp4", "video_2_audioremoved.mp4"]
+  val_test_video: ["video_4_audioremoved.mp4"]
+
+model:
+  detector: "src/models/yolov8n.pt"
+  classifier_input_size: 224
+  batch_size: 32
+  epochs: 15
+  learning_rate: 0.001
+
+pipeline:
+  detection_confidence_threshold: 0.5
