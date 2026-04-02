@@ -110,3 +110,7 @@ This pipeline is designed strictly for **Observability**, not surveillance.
 - **No Biometrics:** The system does not perform facial recognition or identity tracking.
 - **Posture-Only:** Classification is based purely on geometric posture heuristics (Oriented vs. Diverted).
 - **Aggregate Telemetry:** Outputs are smoothed into macro-level classroom engagement ratios. No individual student data or images are stored in the final telemetry outputs.
+
+## License
+
+This project is licensed under the [MIT License](LICENSE).
