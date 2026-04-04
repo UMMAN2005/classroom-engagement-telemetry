@@ -57,6 +57,12 @@ Or run individual steps:
 | 12   | `make plot-curves`         | Plot training loss and accuracy curves from history CSV         |
 | 13   | `make diagram`             | Generate AWS enterprise architecture diagram (requires awsdac)  |
 
+## Live System Demo
+
+[Watch the privacy-anonymized classroom demo video](results/classroom_demo_anonymized.mp4)
+
+*Real-time engagement detection with color-coded bounding boxes (green = oriented, red = diverted), Gaussian face blur for privacy, and a telemetry HUD overlay showing per-frame engagement ratios.*
+
 ## Model Evaluation & Domain Shift
 
 ![Training Curves](results/training_curves.png)

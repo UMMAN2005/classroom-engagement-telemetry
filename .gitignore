@@ -8,11 +8,6 @@ data/crops/
 *.pth
 *.onnx
 
-# Generated results (reproducible from pipeline)
-results/*
-!results/*.png
-!results/*.csv
-
 # Python cache and environment
 __pycache__/
 *.pyc
