@@ -9,7 +9,9 @@ data/crops/
 *.onnx
 
 # Generated results (reproducible from pipeline)
-results/
+results/*
+!results/*.png
+!results/*.csv
 
 # Python cache and environment
 __pycache__/
