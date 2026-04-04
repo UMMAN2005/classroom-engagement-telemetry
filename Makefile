@@ -1,4 +1,6 @@
-.PHONY: setup extract-frames crop-students split-data train-baseline evaluate-baseline generate-telemetry generate-gradcam publish-model deploy-space
+.PHONY: all setup extract-frames crop-students split-data train-baseline evaluate-baseline generate-telemetry generate-gradcam tsne benchmark visualize-video plot-curves diagram publish-model deploy-space
+
+all: extract-frames crop-students split-data train-baseline evaluate-baseline generate-telemetry generate-gradcam tsne benchmark visualize-video plot-curves
 
 setup:
 	pip install -r requirements.txt
@@ -23,6 +25,21 @@ generate-telemetry:
 
 generate-gradcam:
 	python src/eval/generate_gradcam.py
+
+tsne:
+	python src/eval/visualize_embeddings.py
+
+benchmark:
+	python src/models/optimize_onnx.py
+
+visualize-video:
+	python src/eval/visualize_video.py
+
+plot-curves:
+	python src/eval/plot_curves.py
+
+diagram:
+	awsdac src/docs/aws_architecture.yaml -o results/aws_enterprise_architecture.png
 
 publish-model:
 	python src/models/publish_to_huggingface.py

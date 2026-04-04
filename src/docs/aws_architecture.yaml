@@ -1,0 +1,215 @@
+Diagram:
+  DefinitionFiles:
+    - Type: URL
+      Url: "https://raw.githubusercontent.com/awslabs/diagram-as-code/main/definitions/definition-for-aws-icons-light.yaml"
+
+  Resources:
+    Canvas:
+      Type: AWS::Diagram::Canvas
+      Direction: vertical
+      Children:
+        - EdgeDC
+        - AWSCloud
+
+    # -------------------------------------------------------
+    # Edge Layer
+    # -------------------------------------------------------
+    EdgeDC:
+      Type: AWS::Diagram::DataCenter
+      Direction: horizontal
+      Title: "Classroom Edge - Privacy Preserved"
+      Children:
+        - Camera
+        - Greengrass
+
+    Camera:
+      Type: AWS::IoT
+      Preset: "IoT thing camera"
+
+    Greengrass:
+      Type: AWS::GreengrassV2
+      Title: "ONNX Edge Inference & Anonymization"
+
+    # -------------------------------------------------------
+    # AWS Cloud → Region
+    # -------------------------------------------------------
+    AWSCloud:
+      Type: AWS::Diagram::Cloud
+      Direction: vertical
+      Preset: AWSCloudNoLogo
+      Align: center
+      Children:
+        - CloudRegion
+
+    CloudRegion:
+      Type: AWS::Region
+      Direction: vertical
+      Title: "us-east-1"
+      Children:
+        - IngestRow
+        - DataRow
+        - AnalyticsRow
+        - OpsRow
+
+    # -------------------------------------------------------
+    # Row 1 — Ingestion (IoT Core → Firehose)
+    # -------------------------------------------------------
+    IngestRow:
+      Type: AWS::Diagram::HorizontalStack
+      Children:
+        - IoTCore
+        - Firehose
+
+    IoTCore:
+      Type: AWS::IoT
+
+    Firehose:
+      Type: AWS::Kinesis
+      Preset: "Amazon Data Firehose"
+
+    # -------------------------------------------------------
+    # Row 2 — Data (S3 | KMS | Timestream)
+    # KMS centered so its left/right links stay short
+    # -------------------------------------------------------
+    DataRow:
+      Type: AWS::Diagram::HorizontalStack
+      Children:
+        - S3Bucket
+        - KMSKey
+        - TimestreamDB
+
+    S3Bucket:
+      Type: AWS::S3::Bucket
+      Title: "Raw Video Logs"
+
+    KMSKey:
+      Type: AWS::KMS
+      Title: "Encryption Keys (FERPA/GDPR)"
+
+    TimestreamDB:
+      Type: AWS::Timestream::Database
+      Title: "Engagement Metrics"
+
+    # -------------------------------------------------------
+    # Row 3 — Analytics & MLOps (Athena | SageMaker | Grafana)
+    # -------------------------------------------------------
+    AnalyticsRow:
+      Type: AWS::Diagram::HorizontalStack
+      Children:
+        - AthenaQuery
+        - SageMakerModel
+        - GrafanaWS
+
+    AthenaQuery:
+      Type: AWS::Athena
+      Title: "Amazon Athena"
+
+    SageMakerModel:
+      Type: AWS::SageMaker::Model
+      Title: "Model Retraining"
+
+    GrafanaWS:
+      Type: AWS::Grafana::Workspace
+
+    # -------------------------------------------------------
+    # Row 4 — Operations (CloudWatch | Lambda)
+    # -------------------------------------------------------
+    OpsRow:
+      Type: AWS::Diagram::HorizontalStack
+      Children:
+        - CWAlarm
+        - LambdaFn
+
+    CWAlarm:
+      Type: AWS::CloudWatch::Alarm
+
+    LambdaFn:
+      Type: AWS::Lambda::Function
+
+  Links:
+    # Edge
+    - Source: Camera
+      Target: Greengrass
+      TargetArrowHead:
+        Type: Open
+
+    - Source: Greengrass
+      SourcePosition: S
+      Target: IoTCore
+      TargetPosition: N
+      TargetArrowHead:
+        Type: Open
+
+    # Ingestion
+    - Source: IoTCore
+      Target: Firehose
+      TargetArrowHead:
+        Type: Open
+
+    # Firehose fan-out to storage
+    - Source: Firehose
+      SourcePosition: SSW
+      Target: S3Bucket
+      TargetPosition: N
+      TargetArrowHead:
+        Type: Open
+
+    - Source: Firehose
+      SourcePosition: SSE
+      Target: TimestreamDB
+      TargetPosition: N
+      TargetArrowHead:
+        Type: Open
+
+    # KMS encrypts storage (short horizontal links)
+    - Source: KMSKey
+      SourcePosition: W
+      Target: S3Bucket
+      TargetPosition: E
+      TargetArrowHead:
+        Type: Open
+
+    - Source: KMSKey
+      SourcePosition: E
+      Target: TimestreamDB
+      TargetPosition: W
+      TargetArrowHead:
+        Type: Open
+
+    # Athena queries S3 (straight vertical)
+    - Source: AthenaQuery
+      SourcePosition: N
+      Target: S3Bucket
+      TargetPosition: S
+      TargetArrowHead:
+        Type: Open
+
+    # SageMaker retraining loop
+    - Source: S3Bucket
+      SourcePosition: S
+      Target: SageMakerModel
+      TargetPosition: N
+      TargetArrowHead:
+        Type: Open
+
+    - Source: SageMakerModel
+      SourcePosition: N
+      Target: Greengrass
+      TargetPosition: S
+      TargetArrowHead:
+        Type: Open
+      Type: orthogonal
+
+    # Grafana reads Timestream (straight vertical)
+    - Source: GrafanaWS
+      SourcePosition: N
+      Target: TimestreamDB
+      TargetPosition: S
+      TargetArrowHead:
+        Type: Open
+
+    # Alerting
+    - Source: CWAlarm
+      Target: LambdaFn
+      TargetArrowHead:
+        Type: Open

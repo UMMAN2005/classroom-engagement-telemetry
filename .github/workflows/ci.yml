@@ -30,3 +30,17 @@ jobs:
       - name: Lint with flake8 (style warnings)
         run: |
           flake8 src/ --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics
+
+      - name: Smoke test (model architecture)
+        run: |
+          pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
+          python -c "
+          import torch
+          from torchvision import models
+          model = models.mobilenet_v2(weights=None)
+          model.classifier[1] = torch.nn.Linear(1280, 3)
+          model.eval()
+          out = model(torch.randn(1, 3, 224, 224))
+          assert out.shape == (1, 3)
+          print('Smoke test passed')
+          "

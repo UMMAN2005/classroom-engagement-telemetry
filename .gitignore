@@ -3,9 +3,10 @@ data/raw_videos/
 data/extracted_frames/
 data/crops/
 
-# Model weights (YOLO and MobileNet)
+# Model weights and optimized exports
 *.pt
 *.pth
+*.onnx
 
 # Generated results (reproducible from pipeline)
 results/

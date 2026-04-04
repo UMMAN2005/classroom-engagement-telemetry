@@ -10,3 +10,7 @@ tqdm
 pandas
 grad-cam
 huggingface_hub
+onnx
+onnxruntime
+onnxscript
+protobuf>=3.20.2,<5.0

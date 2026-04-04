@@ -1,3 +1,4 @@
+import csv
 import yaml
 import torch
 import torch.nn as nn
@@ -144,6 +145,8 @@ def main():
 
     print(f"\nStarting training for {epochs} epochs (batch_size={batch_size}, lr={lr})\n")
 
+    history = []
+
     for epoch in range(1, epochs + 1):
         train_loss, train_acc = train_one_epoch(model, train_loader, criterion, optimizer, device)
         val_loss, val_acc = validate(model, val_loader, criterion, device)
@@ -159,6 +162,20 @@ def main():
             f"Train Loss: {train_loss:.4f}  Acc: {train_acc:.3f} | "
             f"Val Loss: {val_loss:.4f}  Acc: {val_acc:.3f}{tag}"
         )
+
+        history.append([epoch, train_loss, train_acc, val_loss, val_acc])
+
+    results_dir = project_root / "results"
+    results_dir.mkdir(exist_ok=True)
+    history_path = results_dir / "history.csv"
+    with open(history_path, "w", newline="") as f:
+        writer = csv.writer(f)
+        writer.writerow([
+            "epoch", "train_loss", "train_acc",
+            "val_loss", "val_acc",
+        ])
+        writer.writerows(history)
+    print(f"Training history saved to: {history_path}")
 
     print(f"\nTraining complete. Best Val Accuracy: {best_val_acc:.3f}")
     print(f"Best weights saved to: {save_path}")
