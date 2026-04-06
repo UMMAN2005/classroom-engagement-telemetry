@@ -1,16 +1,20 @@
 project:
-  name: "classroom_engagement_telemetry"
+  name: "classroom_reaction_recognition"
   random_seed: 42
 
 data:
   video_dir: "data/raw_videos"
   extracted_frames_dir: "data/extracted_frames"
   cropped_persons_dir: "data/crops"
-  frame_interval_seconds: 10
+  staging_dir: "data/crops/staging"
+  frame_interval_seconds: 1
+
+classes: ["Neutral", "Confused", "Smiling_Amused", "Surprised", "Bored_Tired"]
 
 split:
-  train_videos: ["video_1_audioremoved.mp4", "video_2_audioremoved.mp4"]
-  val_test_video: ["video_4_audioremoved.mp4"]
+  train_ratio: 0.70
+  val_ratio: 0.10
+  test_ratio: 0.20
 
 model:
   detector: "src/models/yolov8n.pt"

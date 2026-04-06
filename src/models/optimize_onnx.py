@@ -11,11 +11,11 @@ import onnxruntime as ort
 from torchvision import models
 
 warnings.filterwarnings(
-    "ignore", message=".*legacy TorchScript-based ONNX.*",
+    "ignore",
+    message=".*legacy TorchScript-based ONNX.*",
 )
 
 
-CLASS_NAMES = ["0_oriented", "1_diverted", "2_obscured"]
 NUM_WARMUP = 10
 NUM_ITERATIONS = 100
 
@@ -26,18 +26,19 @@ def load_config(config_path: Path) -> dict:
 
 
 def build_model(weights_path: Path, num_classes: int) -> nn.Module:
-    model = models.mobilenet_v2(weights=None)
-    model.classifier[1] = nn.Linear(model.last_channel, num_classes)
+    model = models.resnet18(weights=None)
+    model.fc = nn.Linear(model.fc.in_features, num_classes)
     model.load_state_dict(
-        torch.load(str(weights_path), map_location="cpu",
-                   weights_only=True)
+        torch.load(str(weights_path), map_location="cpu", weights_only=True)
     )
     model.eval()
     return model
 
 
 def export_onnx(
-    model: nn.Module, onnx_path: Path, input_size: int,
+    model: nn.Module,
+    onnx_path: Path,
+    input_size: int,
 ) -> None:
     dummy = torch.randn(1, 3, input_size, input_size)
     torch.onnx.export(
@@ -76,7 +77,10 @@ def benchmark_pytorch(model: nn.Module, input_size: int) -> float:
 def benchmark_onnx(session, input_size: int) -> float:
     input_name = session.get_inputs()[0].name
     dummy = np.random.randn(
-        1, 3, input_size, input_size,
+        1,
+        3,
+        input_size,
+        input_size,
     ).astype(np.float32)
 
     for _ in range(NUM_WARMUP):
@@ -93,13 +97,14 @@ def benchmark_onnx(session, input_size: int) -> float:
 def main():
     project_root = Path(__file__).resolve().parents[2]
     config = load_config(project_root / "config.yaml")
+    num_classes = len(config["classes"])
     input_size = config["model"]["classifier_input_size"]
 
-    weights_path = project_root / "src" / "models" / "best_baseline.pth"
+    weights_path = project_root / "src" / "models" / "best_resnet18.pth"
     onnx_path = project_root / "src" / "models" / "model.onnx"
 
-    print("Loading PyTorch model...")
-    model = build_model(weights_path, num_classes=len(CLASS_NAMES))
+    print("Loading PyTorch model (ResNet18)...")
+    model = build_model(weights_path, num_classes=num_classes)
 
     print("Exporting to ONNX...")
     export_onnx(model, onnx_path, input_size)
@@ -108,18 +113,17 @@ def main():
     onnx_size_mb = onnx_path.stat().st_size / (1024 * 1024)
 
     session = ort.InferenceSession(
-        str(onnx_path), providers=["CPUExecutionProvider"],
+        str(onnx_path),
+        providers=["CPUExecutionProvider"],
     )
 
     print(
-        f"\nBenchmarking PyTorch "
-        f"({NUM_ITERATIONS} iterations, CPU)...",
+        f"\nBenchmarking PyTorch ({NUM_ITERATIONS} iterations, CPU)...",
     )
     pt_latency = benchmark_pytorch(model, input_size)
 
     print(
-        f"Benchmarking ONNX Runtime "
-        f"({NUM_ITERATIONS} iterations, CPU)...",
+        f"Benchmarking ONNX Runtime ({NUM_ITERATIONS} iterations, CPU)...",
     )
     onnx_latency = benchmark_onnx(session, input_size)
 
@@ -128,13 +132,13 @@ def main():
     speedup = pt_latency / onnx_latency
     size_ratio = pt_size_mb / onnx_size_mb
 
-    print("\n## CPU Inference Benchmark\n")
+    print("\n## CPU Inference Benchmark (ResNet18)\n")
     print(
         f"| {'Runtime':<12} | {'Latency (ms/crop)':>18} "
         f"| {'FPS (crops/sec)':>16} "
         f"| {'Model Size (MB)':>16} |",
     )
-    print(f"|{'-'*14}|{'-'*20}|{'-'*18}|{'-'*18}|")
+    print(f"|{'-' * 14}|{'-' * 20}|{'-' * 18}|{'-' * 18}|")
     print(
         f"| {'PyTorch':<12} | {pt_latency:>18.2f} "
         f"| {pt_fps:>16.1f} | {pt_size_mb:>16.2f} |",
@@ -145,8 +149,7 @@ def main():
         f"| {onnx_size_mb:>16.2f} |",
     )
     print(
-        f"| {'Speedup':<12} | {speedup:>17.2f}x "
-        f"| {'':>16} | {size_ratio:>15.2f}x |",
+        f"| {'Speedup':<12} | {speedup:>17.2f}x | {'':>16} | {size_ratio:>15.2f}x |",
     )
 
     print("\n## ONNX Parity Check\n")
@@ -156,18 +159,17 @@ def main():
         pt_out = model(dummy).numpy()
     input_name = session.get_inputs()[0].name
     onnx_out = session.run(
-        None, {input_name: dummy.numpy()},
+        None,
+        {input_name: dummy.numpy()},
     )[0]
     if np.allclose(pt_out, onnx_out, atol=1e-5):
         print(
-            "ONNX Parity Check PASSED: outputs match "
-            "PyTorch within 1e-5 tolerance.",
+            "ONNX Parity Check PASSED: outputs match PyTorch within 1e-5 tolerance.",
         )
     else:
         max_diff = np.max(np.abs(pt_out - onnx_out))
         print(
-            f"ONNX Parity Check FAILED: max diff "
-            f"= {max_diff:.2e}",
+            f"ONNX Parity Check FAILED: max diff = {max_diff:.2e}",
         )
 
 

@@ -15,10 +15,10 @@ def load_config(config_path: Path) -> dict:
 
 def crop_students(config: dict, project_root: Path) -> None:
     frames_dir = project_root / config["data"]["extracted_frames_dir"]
-    crops_dir = project_root / config["data"]["cropped_persons_dir"]
+    staging_dir = project_root / config["data"]["staging_dir"]
     confidence = config["pipeline"]["detection_confidence_threshold"]
 
-    crops_dir.mkdir(parents=True, exist_ok=True)
+    staging_dir.mkdir(parents=True, exist_ok=True)
 
     detector_path = project_root / config["model"]["detector"]
     model = YOLO(str(detector_path))
@@ -57,7 +57,7 @@ def crop_students(config: dict, project_root: Path) -> None:
 
                 crop = image[y1:y2, x1:x2]
                 out_name = f"{frame_path.stem}_crop_{crop_idx}.jpg"
-                cv2.imwrite(str(crops_dir / out_name), crop)
+                cv2.imwrite(str(staging_dir / out_name), crop)
                 crop_idx += 1
 
         total_crops += crop_idx

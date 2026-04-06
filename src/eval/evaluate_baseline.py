@@ -10,11 +10,10 @@ from pathlib import Path
 
 from torch.utils.data import DataLoader
 from torchvision import datasets, transforms, models
-from sklearn.metrics import classification_report, confusion_matrix
+from sklearn.metrics import classification_report, confusion_matrix, accuracy_score
 from tqdm import tqdm
 
 
-CLASS_NAMES = ["0_oriented", "1_diverted", "2_obscured"]
 IMAGENET_MEAN = [0.485, 0.456, 0.406]
 IMAGENET_STD = [0.229, 0.224, 0.225]
 
@@ -32,9 +31,18 @@ def get_device() -> torch.device:
     return torch.device("cpu")
 
 
-def build_model(weights_path: Path, num_classes: int, device: torch.device) -> nn.Module:
-    model = models.mobilenet_v2(weights=None)
-    model.classifier[1] = nn.Linear(model.last_channel, num_classes)
+def build_resnet18(weights_path: Path, num_classes: int, device: torch.device) -> nn.Module:
+    model = models.resnet18(weights=None)
+    model.fc = nn.Linear(model.fc.in_features, num_classes)
+    model.load_state_dict(torch.load(str(weights_path), map_location=device))
+    model.to(device)
+    model.eval()
+    return model
+
+
+def build_vgg16(weights_path: Path, num_classes: int, device: torch.device) -> nn.Module:
+    model = models.vgg16(weights=None)
+    model.classifier[6] = nn.Linear(model.classifier[6].in_features, num_classes)
     model.load_state_dict(torch.load(str(weights_path), map_location=device))
     model.to(device)
     model.eval()
@@ -74,10 +82,10 @@ def save_predictions_csv(dataset, y_true, y_pred, confs, class_names, save_path:
     print(f"Predictions CSV saved to: {save_path}")
 
 
-def plot_confusion_matrix(y_true, y_pred, class_names, save_path: Path):
+def plot_confusion_matrix(y_true, y_pred, class_names, title, save_path: Path):
     cm = confusion_matrix(y_true, y_pred)
 
-    plt.figure(figsize=(8, 6))
+    plt.figure(figsize=(9, 7))
     sns.heatmap(
         cm,
         annot=True,
@@ -86,13 +94,43 @@ def plot_confusion_matrix(y_true, y_pred, class_names, save_path: Path):
         xticklabels=class_names,
         yticklabels=class_names,
     )
-    plt.title("Baseline Confusion Matrix")
+    plt.title(title)
     plt.xlabel("Predicted")
     plt.ylabel("True")
     plt.tight_layout()
     plt.savefig(str(save_path), dpi=150)
     plt.close()
     print(f"Confusion matrix saved to: {save_path}")
+
+
+def evaluate_model(model_name, model, test_loader, test_dataset, class_names, device, results_dir):
+    print(f"\n{'='*60}")
+    print(f"Evaluating {model_name}")
+    print(f"{'='*60}")
+
+    y_true, y_pred, confs = collect_predictions(model, test_loader, device)
+
+    report = classification_report(y_true, y_pred, target_names=class_names, output_dict=True)
+    print("\n" + classification_report(y_true, y_pred, target_names=class_names))
+
+    plot_confusion_matrix(
+        y_true, y_pred, class_names,
+        title=f"{model_name} Confusion Matrix",
+        save_path=results_dir / f"{model_name.lower()}_confusion_matrix.png",
+    )
+
+    save_predictions_csv(
+        test_dataset, y_true, y_pred, confs, class_names,
+        save_path=results_dir / f"{model_name.lower()}_test_predictions.csv",
+    )
+
+    return {
+        "model": model_name,
+        "accuracy": accuracy_score(y_true, y_pred),
+        "precision": report["weighted avg"]["precision"],
+        "recall": report["weighted avg"]["recall"],
+        "f1": report["weighted avg"]["f1-score"],
+    }
 
 
 def main():
@@ -102,6 +140,8 @@ def main():
     device = get_device()
     print(f"Device: {device}")
 
+    class_names = config["classes"]
+    num_classes = len(class_names)
     input_size = config["model"]["classifier_input_size"]
     batch_size = config["model"]["batch_size"]
 
@@ -118,27 +158,45 @@ def main():
     print(f"Test samples: {len(test_dataset)}")
     print(f"Classes: {test_dataset.classes}")
 
-    weights_path = project_root / "src" / "models" / "best_baseline.pth"
-    model = build_model(weights_path, num_classes=len(CLASS_NAMES), device=device)
-
     results_dir = project_root / "results"
     results_dir.mkdir(exist_ok=True)
+    models_dir = project_root / "src" / "models"
 
-    y_true, y_pred, confs = collect_predictions(model, test_loader, device)
+    comparison = []
 
-    print("\n" + classification_report(y_true, y_pred, target_names=CLASS_NAMES))
+    resnet_path = models_dir / "best_resnet18.pth"
+    if resnet_path.exists():
+        resnet = build_resnet18(resnet_path, num_classes, device)
+        comparison.append(
+            evaluate_model("ResNet18", resnet, test_loader, test_dataset, class_names, device, results_dir)
+        )
 
-    plot_confusion_matrix(
-        y_true,
-        y_pred,
-        CLASS_NAMES,
-        save_path=results_dir / "baseline_confusion_matrix.png",
-    )
+    vgg_path = models_dir / "best_vgg16.pth"
+    if vgg_path.exists():
+        vgg = build_vgg16(vgg_path, num_classes, device)
+        comparison.append(
+            evaluate_model("VGG16", vgg, test_loader, test_dataset, class_names, device, results_dir)
+        )
 
-    save_predictions_csv(
-        test_dataset, y_true, y_pred, confs, CLASS_NAMES,
-        save_path=results_dir / "test_predictions.csv",
-    )
+    if comparison:
+        print(f"\n{'='*60}")
+        print("Side-by-Side Model Comparison")
+        print(f"{'='*60}")
+        header = f"{'Model':<12} {'Accuracy':>10} {'Precision':>10} {'Recall':>10} {'F1':>10}"
+        print(header)
+        print("-" * len(header))
+        for row in comparison:
+            print(
+                f"{row['model']:<12} {row['accuracy']:>10.4f} "
+                f"{row['precision']:>10.4f} {row['recall']:>10.4f} {row['f1']:>10.4f}"
+            )
+
+        comp_path = results_dir / "model_comparison.csv"
+        with open(comp_path, "w", newline="") as f:
+            writer = csv.DictWriter(f, fieldnames=["model", "accuracy", "precision", "recall", "f1"])
+            writer.writeheader()
+            writer.writerows(comparison)
+        print(f"\nComparison saved to: {comp_path}")
 
 
 if __name__ == "__main__":

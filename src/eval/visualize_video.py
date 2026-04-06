@@ -9,22 +9,11 @@ from ultralytics import YOLO
 from tqdm import tqdm
 
 
-CLASS_NAMES = ["0_oriented", "1_diverted", "2_obscured"]
 PERSON_CLASS = 0
 IMAGENET_MEAN = [0.485, 0.456, 0.406]
 IMAGENET_STD = [0.229, 0.224, 0.225]
 
-BOX_COLORS = {
-    0: (0, 200, 0),
-    1: (0, 0, 220),
-    2: (180, 180, 180),
-}
-CLASS_LABELS = {0: "Oriented", 1: "Diverted", 2: "Obscured"}
-
 DURATION_SECONDS = 30
-FACE_RATIO = 0.30
-BLUR_KSIZE = (99, 99)
-BLUR_SIGMA = 30
 
 
 def load_config(config_path: Path) -> dict:
@@ -43,8 +32,8 @@ def get_device() -> torch.device:
 def build_classifier(
     weights_path: Path, num_classes: int, device: torch.device,
 ) -> nn.Module:
-    model = models.mobilenet_v2(weights=None)
-    model.classifier[1] = nn.Linear(model.last_channel, num_classes)
+    model = models.resnet18(weights=None)
+    model.fc = nn.Linear(model.fc.in_features, num_classes)
     state = torch.load(str(weights_path), map_location=device)
     model.load_state_dict(state)
     model.to(device)
@@ -61,21 +50,10 @@ def get_test_transform(input_size: int) -> transforms.Compose:
     ])
 
 
-def blur_face_region(frame, x1, y1, x2, y2):
-    """Apply Gaussian blur to the top portion of a box."""
-    face_y2 = y1 + int((y2 - y1) * FACE_RATIO)
-    face_y2 = min(face_y2, y2)
-    if face_y2 > y1 and x2 > x1:
-        face_roi = frame[y1:face_y2, x1:x2]
-        frame[y1:face_y2, x1:x2] = cv2.GaussianBlur(
-            face_roi, BLUR_KSIZE, BLUR_SIGMA
-        )
-
-
-def draw_hud(frame, frame_idx, total_frames, counts, engagement):
-    """Draw a semi-transparent telemetry HUD in the top-left corner."""
+def draw_hud(frame, frame_idx, total_frames, counts, class_names):
     overlay = frame.copy()
-    hud_w, hud_h = 320, 160
+    num_classes = len(class_names)
+    hud_w, hud_h = 340, 40 + num_classes * 25 + 10
     cv2.rectangle(overlay, (10, 10), (10 + hud_w, 10 + hud_h), (0, 0, 0), -1)
     cv2.addWeighted(overlay, 0.6, frame, 0.4, 0, frame)
 
@@ -87,39 +65,21 @@ def draw_hud(frame, frame_idx, total_frames, counts, engagement):
         frame, f"Frame: {frame_idx + 1}/{total_frames}",
         (x0, y0), font, 0.55, (255, 255, 255), 1, cv2.LINE_AA,
     )
-    cv2.putText(
-        frame, f"Oriented:  {counts[0]}",
-        (x0, y0 + line_h), font, 0.55, BOX_COLORS[0], 1, cv2.LINE_AA,
-    )
-    cv2.putText(
-        frame, f"Diverted:  {counts[1]}",
-        (x0, y0 + 2 * line_h), font, 0.55, BOX_COLORS[1], 1, cv2.LINE_AA,
-    )
-    cv2.putText(
-        frame, f"Obscured:  {counts[2]}",
-        (x0, y0 + 3 * line_h), font, 0.55, BOX_COLORS[2], 1, cv2.LINE_AA,
-    )
 
-    bar_x, bar_y = x0, y0 + 4 * line_h
-    bar_w, bar_max = 200, 200
-    filled = int(bar_max * engagement)
-    bg_end = (bar_x + bar_w, bar_y + 4)
-    cv2.rectangle(
-        frame, (bar_x, bar_y - 12), bg_end,
-        (80, 80, 80), -1,
-    )
-    if filled > 0:
-        fill_end = (bar_x + filled, bar_y + 4)
-        cv2.rectangle(
-            frame, (bar_x, bar_y - 12), fill_end,
-            (0, 200, 0), -1,
+    box_colors = [
+        (180, 180, 180),
+        (0, 100, 255),
+        (0, 200, 0),
+        (0, 255, 255),
+        (0, 0, 220),
+    ]
+
+    for i, cls in enumerate(class_names):
+        color = box_colors[i % len(box_colors)]
+        cv2.putText(
+            frame, f"{cls}: {counts[i]}",
+            (x0, y0 + (i + 1) * line_h), font, 0.50, color, 1, cv2.LINE_AA,
         )
-    txt_x = bar_x + bar_w + 8
-    cv2.putText(
-        frame, f"Engagement: {engagement:.0%}",
-        (txt_x, bar_y + 2), font, 0.5,
-        (255, 255, 255), 1, cv2.LINE_AA,
-    )
 
 
 def main():
@@ -129,12 +89,17 @@ def main():
     device = get_device()
     print(f"Device: {device}")
 
+    class_names = config["classes"]
+    num_classes = len(class_names)
     confidence = config["pipeline"]["detection_confidence_threshold"]
     input_size = config["model"]["classifier_input_size"]
 
-    val_test_videos = config["split"]["val_test_video"]
     video_dir = project_root / config["data"]["video_dir"]
-    video_path = video_dir / val_test_videos[0]
+    video_files = sorted(video_dir.glob("*.mp4"))
+    if not video_files:
+        print(f"ERROR: no videos found in {video_dir}")
+        return
+    video_path = video_files[0]
 
     if not video_path.exists():
         print(f"ERROR: test video not found at {video_path}")
@@ -143,10 +108,8 @@ def main():
     detector_path = project_root / config["model"]["detector"]
     detector = YOLO(str(detector_path))
 
-    weights_path = project_root / "src" / "models" / "best_baseline.pth"
-    classifier = build_classifier(
-        weights_path, num_classes=len(CLASS_NAMES), device=device,
-    )
+    weights_path = project_root / "src" / "models" / "best_resnet18.pth"
+    classifier = build_classifier(weights_path, num_classes=num_classes, device=device)
     transform = get_test_transform(input_size)
 
     cap = cv2.VideoCapture(str(video_path))
@@ -164,10 +127,18 @@ def main():
 
     results_dir = project_root / "results"
     results_dir.mkdir(exist_ok=True)
-    out_path = results_dir / "classroom_demo_anonymized.mp4"
+    out_path = results_dir / "classroom_demo.mp4"
 
     fourcc = cv2.VideoWriter_fourcc(*"mp4v")
     writer = cv2.VideoWriter(str(out_path), fourcc, fps, (width, height))
+
+    box_colors = [
+        (180, 180, 180),
+        (0, 100, 255),
+        (0, 200, 0),
+        (0, 255, 255),
+        (0, 0, 220),
+    ]
 
     for frame_idx in tqdm(range(total_frames), desc="Rendering video"):
         ret, frame = cap.read()
@@ -177,7 +148,7 @@ def main():
         h, w = frame.shape[:2]
         results = detector(frame, conf=confidence, verbose=False)
 
-        counts = [0, 0, 0]
+        counts = [0] * num_classes
         crops_with_boxes = []
 
         for result in results:
@@ -207,21 +178,15 @@ def main():
                 cls = preds[i].item()
                 counts[cls] += 1
 
-                blur_face_region(frame, bx1, by1, bx2, by2)
-
-                color = BOX_COLORS[cls]
+                color = box_colors[cls % len(box_colors)]
                 cv2.rectangle(frame, (bx1, by1), (bx2, by2), color, 2)
-                label = CLASS_LABELS[cls]
+                label = class_names[cls]
                 cv2.putText(
                     frame, label, (bx1, by1 - 6),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1, cv2.LINE_AA,
                 )
 
-        oriented = counts[0]
-        diverted = counts[1]
-        engagement = oriented / (oriented + diverted + 1e-4)
-        draw_hud(frame, frame_idx, total_frames, counts, engagement)
-
+        draw_hud(frame, frame_idx, total_frames, counts, class_names)
         writer.write(frame)
 
     cap.release()

@@ -1,9 +1,7 @@
 import shutil
 import yaml
 from pathlib import Path
-
-
-CLASS_DIRS = ["0_oriented", "1_diverted", "2_obscured"]
+from sklearn.model_selection import train_test_split
 
 
 def load_config(config_path: Path) -> dict:
@@ -11,49 +9,67 @@ def load_config(config_path: Path) -> dict:
         return yaml.safe_load(f)
 
 
-def ensure_split_dirs(crops_dir: Path) -> None:
-    for split in ("train", "val", "test"):
-        for cls in CLASS_DIRS:
-            (crops_dir / split / cls).mkdir(parents=True, exist_ok=True)
-
-
 def split_data(config: dict, project_root: Path) -> None:
     crops_dir = project_root / config["data"]["cropped_persons_dir"]
+    staging_dir = project_root / config["data"]["staging_dir"]
+    class_names = config["classes"]
+    seed = config["project"]["random_seed"]
+    train_ratio = config["split"]["train_ratio"]
+    val_ratio = config["split"]["val_ratio"]
 
-    train_stems = [Path(v).stem for v in config["split"]["train_videos"]]
-    val_test_stems = [Path(v).stem for v in config["split"]["val_test_video"]]
+    for split in ("train", "val", "test"):
+        for cls in class_names:
+            (crops_dir / split / cls).mkdir(parents=True, exist_ok=True)
 
-    ensure_split_dirs(crops_dir)
+    all_files = []
+    all_labels = []
 
-    all_crops = sorted(f for f in crops_dir.glob("*.jpg") if f.is_file())
-    if not all_crops:
-        print(f"No .jpg files found in {crops_dir}")
+    for cls in class_names:
+        cls_dir = staging_dir / cls
+        if not cls_dir.exists():
+            print(
+                f"Warning: {cls_dir} does not exist, skipping."
+            )
+            continue
+        for img in sorted(cls_dir.glob("*.jpg")):
+            all_files.append(img)
+            all_labels.append(cls)
+
+    if not all_files:
+        print(
+            f"No images found in staging subdirectories "
+            f"under {staging_dir}"
+        )
         return
 
-    train_files = []
-    val_test_files = []
+    val_test_ratio = 1.0 - train_ratio
+    relative_val = val_ratio / val_test_ratio
 
-    for crop in all_crops:
-        name = crop.name
-        if any(name.startswith(stem) for stem in train_stems):
-            train_files.append(crop)
-        elif any(name.startswith(stem) for stem in val_test_stems):
-            val_test_files.append(crop)
+    train_files, val_test_files, train_labels, val_test_labels = train_test_split(
+        all_files, all_labels,
+        test_size=val_test_ratio,
+        stratify=all_labels,
+        random_state=seed,
+    )
+
+    val_files, test_files, _, _ = train_test_split(
+        val_test_files, val_test_labels,
+        test_size=(1.0 - relative_val),
+        stratify=val_test_labels,
+        random_state=seed,
+    )
 
     for f in train_files:
-        shutil.move(str(f), str(crops_dir / "train" / f.name))
-
-    val_test_files.sort(key=lambda p: p.name)
-    midpoint = len(val_test_files) // 2
-
-    val_files = val_test_files[:midpoint]
-    test_files = val_test_files[midpoint:]
+        cls = f.parent.name
+        shutil.move(str(f), str(crops_dir / "train" / cls / f.name))
 
     for f in val_files:
-        shutil.move(str(f), str(crops_dir / "val" / f.name))
+        cls = f.parent.name
+        shutil.move(str(f), str(crops_dir / "val" / cls / f.name))
 
     for f in test_files:
-        shutil.move(str(f), str(crops_dir / "test" / f.name))
+        cls = f.parent.name
+        shutil.move(str(f), str(crops_dir / "test" / cls / f.name))
 
     print("Split complete.")
     print(f"  Train: {len(train_files)} crops")

@@ -11,7 +11,6 @@ from pytorch_grad_cam import GradCAM
 from pytorch_grad_cam.utils.image import show_cam_on_image
 
 
-CLASS_NAMES = ["0_oriented", "1_diverted", "2_obscured"]
 IMAGENET_MEAN = [0.485, 0.456, 0.406]
 IMAGENET_STD = [0.229, 0.224, 0.225]
 
@@ -32,22 +31,18 @@ def get_device() -> torch.device:
 def build_model(
     weights_path: Path, num_classes: int, device: torch.device
 ) -> nn.Module:
-    model = models.mobilenet_v2(weights=None)
-    model.classifier[1] = nn.Linear(
-        model.last_channel, num_classes
-    )
-    model.load_state_dict(
-        torch.load(str(weights_path), map_location=device)
-    )
+    model = models.resnet18(weights=None)
+    model.fc = nn.Linear(model.fc.in_features, num_classes)
+    model.load_state_dict(torch.load(str(weights_path), map_location=device))
     model.to(device)
     model.eval()
     return model
 
 
-def find_candidate_images(model, dataset, transform, device):
-    """Find a True Positive Diverted and a False Positive Diverted image."""
-    tp_diverted = None  # true=1, pred=1
-    fp_diverted = None  # true=0, pred=1
+def find_candidate_images(model, dataset, transform, device, target_class=1):
+    """Find a True Positive and a False Positive for the target class."""
+    tp = None
+    fp = None
 
     for idx in range(len(dataset)):
         img_path, true_label = dataset.samples[idx]
@@ -57,19 +52,18 @@ def find_candidate_images(model, dataset, transform, device):
         with torch.no_grad():
             pred = model(tensor).argmax(1).item()
 
-        if true_label == 1 and pred == 1 and tp_diverted is None:
-            tp_diverted = (idx, img_path)
-        elif true_label == 0 and pred == 1 and fp_diverted is None:
-            fp_diverted = (idx, img_path)
+        if true_label == target_class and pred == target_class and tp is None:
+            tp = (idx, img_path)
+        elif true_label != target_class and pred == target_class and fp is None:
+            fp = (idx, img_path)
 
-        if tp_diverted and fp_diverted:
+        if tp and fp:
             break
 
-    return tp_diverted, fp_diverted
+    return tp, fp
 
 
 def generate_cam_overlay(model, target_layer, img_path, transform, device):
-    """Generate a GradCAM heatmap overlay for a single image."""
     img_pil = Image.open(img_path).convert("RGB")
     input_tensor = transform(img_pil).unsqueeze(0).to(device)
 
@@ -90,38 +84,40 @@ def main():
     device = get_device()
     print(f"Device: {device}")
 
+    class_names = config["classes"]
+    num_classes = len(class_names)
     input_size = config["model"]["classifier_input_size"]
 
-    test_tf = transforms.Compose([
-        transforms.Resize((input_size, input_size)),
-        transforms.ToTensor(),
-        transforms.Normalize(mean=IMAGENET_MEAN, std=IMAGENET_STD),
-    ])
+    test_tf = transforms.Compose(
+        [
+            transforms.Resize((input_size, input_size)),
+            transforms.ToTensor(),
+            transforms.Normalize(mean=IMAGENET_MEAN, std=IMAGENET_STD),
+        ]
+    )
 
     crops_dir = project_root / config["data"]["cropped_persons_dir"]
     test_dataset = datasets.ImageFolder(str(crops_dir / "test"))
 
-    weights_path = (
-        project_root / "src" / "models" / "best_baseline.pth"
-    )
-    model = build_model(
-        weights_path, num_classes=len(CLASS_NAMES), device=device
-    )
+    weights_path = project_root / "src" / "models" / "best_resnet18.pth"
+    model = build_model(weights_path, num_classes=num_classes, device=device)
 
-    print("Searching for candidate images...")
-    tp, fp = find_candidate_images(model, test_dataset, test_tf, device)
+    target_class = 1
+    target_name = class_names[target_class]
+    print(f"Searching for candidate images (target: {target_name})...")
+    tp, fp = find_candidate_images(model, test_dataset, test_tf, device, target_class)
 
     if tp is None:
-        print("WARNING: No True Positive Diverted image found in test set.")
+        print(f"WARNING: No True Positive {target_name} image found in test set.")
         return
     if fp is None:
-        print("WARNING: No False Positive Diverted image found in test set.")
+        print(f"WARNING: No False Positive {target_name} image found in test set.")
         return
 
-    print(f"  TP Diverted: {Path(tp[1]).name}")
-    print(f"  FP Diverted: {Path(fp[1]).name}")
+    print(f"  TP {target_name}: {Path(tp[1]).name}")
+    print(f"  FP {target_name}: {Path(fp[1]).name}")
 
-    target_layer = model.features[-1]
+    target_layer = model.layer4[-1]
 
     tp_overlay, tp_orig = generate_cam_overlay(
         model, target_layer, tp[1], test_tf, device
@@ -135,8 +131,9 @@ def main():
     axes[0][0].imshow(tp_orig)
     axes[0][0].set_title("Original", fontsize=11)
     axes[0][0].set_ylabel(
-        "Success: Correctly\nIdentified Diverted",
-        fontsize=11, fontweight="bold",
+        f"Success: Correctly\nIdentified {target_name}",
+        fontsize=11,
+        fontweight="bold",
     )
     axes[0][0].axis("off")
 
@@ -147,8 +144,9 @@ def main():
     axes[1][0].imshow(fp_orig)
     axes[1][0].set_title("Original", fontsize=11)
     axes[1][0].set_ylabel(
-        "Failure: Oriented\nMisclassified as Diverted",
-        fontsize=11, fontweight="bold",
+        f"Failure: Misclassified\nas {target_name}",
+        fontsize=11,
+        fontweight="bold",
     )
     axes[1][0].axis("off")
 
@@ -157,8 +155,9 @@ def main():
     axes[1][1].axis("off")
 
     fig.suptitle(
-        "Grad-CAM Analysis: MobileNetV2 Attention Maps",
-        fontsize=14, fontweight="bold",
+        "Grad-CAM Analysis: ResNet18 Attention Maps",
+        fontsize=14,
+        fontweight="bold",
     )
     fig.tight_layout(rect=[0, 0, 1, 0.96])
 

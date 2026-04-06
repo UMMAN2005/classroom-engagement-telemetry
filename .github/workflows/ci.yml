@@ -31,16 +31,26 @@ jobs:
         run: |
           flake8 src/ --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics
 
-      - name: Smoke test (model architecture)
+      - name: Smoke test (model architectures)
         run: |
           pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
           python -c "
           import torch
           from torchvision import models
-          model = models.mobilenet_v2(weights=None)
-          model.classifier[1] = torch.nn.Linear(1280, 3)
-          model.eval()
-          out = model(torch.randn(1, 3, 224, 224))
-          assert out.shape == (1, 3)
-          print('Smoke test passed')
+
+          # ResNet18
+          r = models.resnet18(weights=None)
+          r.fc = torch.nn.Linear(512, 5)
+          r.eval()
+          out = r(torch.randn(1, 3, 224, 224))
+          assert out.shape == (1, 5), f'ResNet18 output shape {out.shape}'
+
+          # VGG16
+          v = models.vgg16(weights=None)
+          v.classifier[6] = torch.nn.Linear(4096, 5)
+          v.eval()
+          out = v(torch.randn(1, 3, 224, 224))
+          assert out.shape == (1, 5), f'VGG16 output shape {out.shape}'
+
+          print('Smoke test passed: ResNet18 and VGG16')
           "

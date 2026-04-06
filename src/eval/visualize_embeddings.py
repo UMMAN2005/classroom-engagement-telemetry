@@ -11,7 +11,6 @@ from sklearn.manifold import TSNE
 from tqdm import tqdm
 
 
-CLASS_NAMES = ["0_oriented", "1_diverted", "2_obscured"]
 IMAGENET_MEAN = [0.485, 0.456, 0.406]
 IMAGENET_STD = [0.229, 0.224, 0.225]
 
@@ -30,11 +29,12 @@ def get_device() -> torch.device:
 
 
 def build_feature_extractor(
-    weights_path: Path, device: torch.device,
+    weights_path: Path,
+    num_classes: int,
+    device: torch.device,
 ) -> nn.Module:
-    model = models.mobilenet_v2(weights=None)
-    in_feat = model.last_channel
-    model.classifier[1] = nn.Linear(in_feat, len(CLASS_NAMES))
+    model = models.resnet18(weights=None)
+    model.fc = nn.Linear(model.fc.in_features, num_classes)
     state = torch.load(str(weights_path), map_location=device)
     model.load_state_dict(state)
     model.to(device)
@@ -44,17 +44,26 @@ def build_feature_extractor(
 
 @torch.no_grad()
 def extract_embeddings(model, loader, device):
-    """Extract 1280-dim bottleneck features."""
+    """Extract 512-dim features from ResNet18 avgpool."""
     all_features = []
     all_labels = []
 
-    pool = nn.AdaptiveAvgPool2d(1)
+    def _forward_features(x):
+        x = model.conv1(x)
+        x = model.bn1(x)
+        x = model.relu(x)
+        x = model.maxpool(x)
+        x = model.layer1(x)
+        x = model.layer2(x)
+        x = model.layer3(x)
+        x = model.layer4(x)
+        x = model.avgpool(x)
+        return x.flatten(1)
 
     for images, labels in tqdm(loader, desc="Extracting embeddings"):
         images = images.to(device)
-        feat_maps = model.features(images)
-        pooled = pool(feat_maps).flatten(1)
-        all_features.append(pooled.cpu().numpy())
+        feats = _forward_features(images)
+        all_features.append(feats.cpu().numpy())
         all_labels.append(labels.numpy())
 
     return np.concatenate(all_features), np.concatenate(all_labels)
@@ -67,15 +76,19 @@ def main():
     device = get_device()
     print(f"Device: {device}")
 
+    class_names = config["classes"]
+    num_classes = len(class_names)
     input_size = config["model"]["classifier_input_size"]
     batch_size = config["model"]["batch_size"]
     seed = config["project"]["random_seed"]
 
-    test_tf = transforms.Compose([
-        transforms.Resize((input_size, input_size)),
-        transforms.ToTensor(),
-        transforms.Normalize(mean=IMAGENET_MEAN, std=IMAGENET_STD),
-    ])
+    test_tf = transforms.Compose(
+        [
+            transforms.Resize((input_size, input_size)),
+            transforms.ToTensor(),
+            transforms.Normalize(mean=IMAGENET_MEAN, std=IMAGENET_STD),
+        ]
+    )
 
     crops_dir = project_root / config["data"]["cropped_persons_dir"]
     test_dir = str(crops_dir / "test")
@@ -87,8 +100,8 @@ def main():
     print(f"Test samples: {len(test_dataset)}")
     print(f"Classes: {test_dataset.classes}")
 
-    weights_path = project_root / "src" / "models" / "best_baseline.pth"
-    model = build_feature_extractor(weights_path, device)
+    weights_path = project_root / "src" / "models" / "best_resnet18.pth"
+    model = build_feature_extractor(weights_path, num_classes, device)
 
     features, labels = extract_embeddings(model, test_loader, device)
     print(f"Feature matrix shape: {features.shape}")
@@ -98,17 +111,17 @@ def main():
     tsne = TSNE(n_components=2, random_state=seed, perplexity=perplexity)
     embeddings_2d = tsne.fit_transform(features)
 
-    colors = ["#2ecc71", "#e74c3c", "#95a5a6"]
-    fig, ax = plt.subplots(figsize=(8, 6))
+    colors = ["#95a5a6", "#e67e22", "#2ecc71", "#f1c40f", "#e74c3c"]
+    fig, ax = plt.subplots(figsize=(9, 7))
 
-    for cls_idx, cls_name in enumerate(CLASS_NAMES):
+    for cls_idx, cls_name in enumerate(class_names):
         mask = labels == cls_idx
         if mask.sum() == 0:
             continue
         ax.scatter(
             embeddings_2d[mask, 0],
             embeddings_2d[mask, 1],
-            c=colors[cls_idx],
+            c=colors[cls_idx % len(colors)],
             label=cls_name,
             alpha=0.7,
             s=40,
@@ -117,8 +130,9 @@ def main():
         )
 
     ax.set_title(
-        "t-SNE: MobileNetV2 Bottleneck Features (Test Set)",
-        fontsize=13, fontweight="bold",
+        "t-SNE: ResNet18 Features (Test Set)",
+        fontsize=13,
+        fontweight="bold",
     )
     ax.set_xlabel("t-SNE Dimension 1")
     ax.set_ylabel("t-SNE Dimension 2")

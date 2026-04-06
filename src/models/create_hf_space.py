@@ -26,21 +26,23 @@ from PIL import Image
 from pytorch_grad_cam import GradCAM
 from pytorch_grad_cam.utils.image import show_cam_on_image
 
-MODEL_REPO = "ummanmm/classroom-engagement-mobilenet"
+MODEL_REPO = "ummanmm/classroom-reaction-resnet18"
 CLASSES = [
-    "Oriented (Lecture-Focused)",
-    "Diverted (Looking Away/Down)",
-    "Obscured (Blocked/Empty)",
+    "Neutral",
+    "Confused",
+    "Smiling / Amused",
+    "Surprised",
+    "Bored / Tired",
 ]
 IMAGENET_MEAN = [0.485, 0.456, 0.406]
 IMAGENET_STD = [0.229, 0.224, 0.225]
 
 model_path = hf_hub_download(
-    repo_id=MODEL_REPO, filename="best_baseline.pth"
+    repo_id=MODEL_REPO, filename="best_resnet18.pth"
 )
 
-model = models.mobilenet_v2(weights=None)
-model.classifier[1] = torch.nn.Linear(model.last_channel, 3)
+model = models.resnet18(weights=None)
+model.fc = torch.nn.Linear(model.fc.in_features, 5)
 model.load_state_dict(
     torch.load(model_path, map_location=torch.device("cpu"))
 )
@@ -53,7 +55,7 @@ transform = transforms.Compose([
 ])
 
 
-def predict_engagement(image):
+def predict_reaction(image):
     if image is None:
         return {}, None
 
@@ -64,10 +66,10 @@ def predict_engagement(image):
         outputs = model(tensor)
         probs = F.softmax(outputs[0], dim=0)
 
-    confidences = {CLASSES[i]: float(probs[i]) for i in range(3)}
+    confidences = {CLASSES[i]: float(probs[i]) for i in range(5)}
 
     rgb = np.array(img.resize((224, 224))).astype(np.float32) / 255.0
-    cam = GradCAM(model=model, target_layers=[model.features[-1]])
+    cam = GradCAM(model=model, target_layers=[model.layer4[-1]])
     grayscale = cam(input_tensor=tensor, targets=None)[0, :]
     heatmap = show_cam_on_image(rgb, grayscale, use_rgb=True)
 
@@ -75,16 +77,16 @@ def predict_engagement(image):
 
 
 demo = gr.Interface(
-    fn=predict_engagement,
+    fn=predict_reaction,
     inputs=gr.Image(label="Upload Student Crop"),
     outputs=[
-        gr.Label(num_top_classes=3, label="Engagement Prediction"),
+        gr.Label(num_top_classes=5, label="Reaction Prediction"),
         gr.Image(label="Grad-CAM Attention Heatmap"),
     ],
-    title="Real-Time Classroom Engagement Telemetry",
+    title="Classroom Reaction Recognition",
     description=(
         "Upload a cropped image of a student to classify their "
-        "physical engagement state using a custom MobileNetV2 model. "
+        "facial reaction using a ResNet18 model. "
         "The Grad-CAM heatmap shows which regions the CNN focuses on."
     ),
     examples=[],
@@ -100,7 +102,7 @@ def main():
         print("Username cannot be empty.")
         return
 
-    space_name = "Classroom-Engagement-Demo"
+    space_name = "Classroom-Reaction-Demo"
     repo_id = f"{username}/{space_name}"
     api = HfApi()
 

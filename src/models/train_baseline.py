@@ -10,7 +10,6 @@ from torchvision import datasets, transforms, models
 from tqdm import tqdm
 
 
-CLASS_NAMES = ["0_oriented", "1_diverted", "2_obscured"]
 IMAGENET_MEAN = [0.485, 0.456, 0.406]
 IMAGENET_STD = [0.229, 0.224, 0.225]
 
@@ -55,13 +54,19 @@ def compute_class_weights(dataset: datasets.ImageFolder, device: torch.device) -
     return torch.FloatTensor(weights).to(device)
 
 
-def build_model(num_classes: int, device: torch.device) -> nn.Module:
-    model = models.mobilenet_v2(weights=models.MobileNet_V2_Weights.IMAGENET1K_V1)
+def build_resnet18(num_classes: int, device: torch.device) -> nn.Module:
+    model = models.resnet18(weights=models.ResNet18_Weights.IMAGENET1K_V1)
+    for param in model.parameters():
+        param.requires_grad = False
+    model.fc = nn.Linear(model.fc.in_features, num_classes)
+    return model.to(device)
 
+
+def build_vgg16(num_classes: int, device: torch.device) -> nn.Module:
+    model = models.vgg16(weights=models.VGG16_Weights.IMAGENET1K_V1)
     for param in model.features.parameters():
         param.requires_grad = False
-
-    model.classifier[1] = nn.Linear(model.last_channel, num_classes)
+    model.classifier[6] = nn.Linear(model.classifier[6].in_features, num_classes)
     return model.to(device)
 
 
@@ -109,6 +114,57 @@ def validate(model, loader, criterion, device):
     return running_loss / total, correct / total
 
 
+def train_model(
+    model_name: str,
+    model: nn.Module,
+    train_loader: DataLoader,
+    val_loader: DataLoader,
+    criterion: nn.Module,
+    device: torch.device,
+    lr: float,
+    epochs: int,
+    save_path: Path,
+    history_path: Path,
+):
+    optimizer = torch.optim.Adam(
+        filter(lambda p: p.requires_grad, model.parameters()), lr=lr,
+    )
+    best_val_acc = 0.0
+    history = []
+
+    print(f"\n{'='*60}")
+    print(f"Training {model_name} for {epochs} epochs")
+    print(f"{'='*60}\n")
+
+    for epoch in range(1, epochs + 1):
+        train_loss, train_acc = train_one_epoch(model, train_loader, criterion, optimizer, device)
+        val_loss, val_acc = validate(model, val_loader, criterion, device)
+
+        tag = ""
+        if val_acc > best_val_acc:
+            best_val_acc = val_acc
+            torch.save(model.state_dict(), str(save_path))
+            tag = "  <-- best"
+
+        print(
+            f"Epoch {epoch:02d}/{epochs} | "
+            f"Train Loss: {train_loss:.4f}  Acc: {train_acc:.3f} | "
+            f"Val Loss: {val_loss:.4f}  Acc: {val_acc:.3f}{tag}"
+        )
+
+        history.append([epoch, train_loss, train_acc, val_loss, val_acc])
+
+    with open(history_path, "w", newline="") as f:
+        writer = csv.writer(f)
+        writer.writerow(["epoch", "train_loss", "train_acc", "val_loss", "val_acc"])
+        writer.writerows(history)
+    print(f"Training history saved to: {history_path}")
+    print(f"{model_name} complete. Best Val Accuracy: {best_val_acc:.3f}")
+    print(f"Best weights saved to: {save_path}")
+
+    return best_val_acc
+
+
 def main():
     project_root = Path(__file__).resolve().parents[2]
     config = load_config(project_root / "config.yaml")
@@ -117,6 +173,8 @@ def main():
     device = get_device()
     print(f"Device: {device}")
 
+    class_names = config["classes"]
+    num_classes = len(class_names)
     input_size = config["model"]["classifier_input_size"]
     batch_size = config["model"]["batch_size"]
     epochs = config["model"]["epochs"]
@@ -137,48 +195,25 @@ def main():
     class_weights = compute_class_weights(train_dataset, device)
     criterion = nn.CrossEntropyLoss(weight=class_weights)
 
-    model = build_model(num_classes=len(CLASS_NAMES), device=device)
-    optimizer = torch.optim.Adam(model.parameters(), lr=lr)
-
-    save_path = project_root / "src" / "models" / "best_baseline.pth"
-    best_val_acc = 0.0
-
-    print(f"\nStarting training for {epochs} epochs (batch_size={batch_size}, lr={lr})\n")
-
-    history = []
-
-    for epoch in range(1, epochs + 1):
-        train_loss, train_acc = train_one_epoch(model, train_loader, criterion, optimizer, device)
-        val_loss, val_acc = validate(model, val_loader, criterion, device)
-
-        tag = ""
-        if val_acc > best_val_acc:
-            best_val_acc = val_acc
-            torch.save(model.state_dict(), str(save_path))
-            tag = "  <-- best"
-
-        print(
-            f"Epoch {epoch:02d}/{epochs} | "
-            f"Train Loss: {train_loss:.4f}  Acc: {train_acc:.3f} | "
-            f"Val Loss: {val_loss:.4f}  Acc: {val_acc:.3f}{tag}"
-        )
-
-        history.append([epoch, train_loss, train_acc, val_loss, val_acc])
-
     results_dir = project_root / "results"
     results_dir.mkdir(exist_ok=True)
-    history_path = results_dir / "history.csv"
-    with open(history_path, "w", newline="") as f:
-        writer = csv.writer(f)
-        writer.writerow([
-            "epoch", "train_loss", "train_acc",
-            "val_loss", "val_acc",
-        ])
-        writer.writerows(history)
-    print(f"Training history saved to: {history_path}")
+    models_dir = project_root / "src" / "models"
 
-    print(f"\nTraining complete. Best Val Accuracy: {best_val_acc:.3f}")
-    print(f"Best weights saved to: {save_path}")
+    resnet = build_resnet18(num_classes, device)
+    train_model(
+        "ResNet18", resnet, train_loader, val_loader, criterion, device, lr, epochs,
+        save_path=models_dir / "best_resnet18.pth",
+        history_path=results_dir / "history_resnet18.csv",
+    )
+
+    vgg = build_vgg16(num_classes, device)
+    train_model(
+        "VGG16", vgg, train_loader, val_loader, criterion, device, lr, epochs,
+        save_path=models_dir / "best_vgg16.pth",
+        history_path=results_dir / "history_vgg16.csv",
+    )
+
+    print("\nAll training complete.")
 
 
 if __name__ == "__main__":

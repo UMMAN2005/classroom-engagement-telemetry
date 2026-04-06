@@ -2,7 +2,6 @@ import cv2
 import yaml
 import torch
 import torch.nn as nn
-import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
@@ -13,7 +12,6 @@ from ultralytics import YOLO
 from tqdm import tqdm
 
 
-CLASS_NAMES = ["0_oriented", "1_diverted", "2_obscured"]
 PERSON_CLASS = 0
 IMAGENET_MEAN = [0.485, 0.456, 0.406]
 IMAGENET_STD = [0.229, 0.224, 0.225]
@@ -33,8 +31,8 @@ def get_device() -> torch.device:
 
 
 def build_classifier(weights_path: Path, num_classes: int, device: torch.device) -> nn.Module:
-    model = models.mobilenet_v2(weights=None)
-    model.classifier[1] = nn.Linear(model.last_channel, num_classes)
+    model = models.resnet18(weights=None)
+    model.fc = nn.Linear(model.fc.in_features, num_classes)
     model.load_state_dict(torch.load(str(weights_path), map_location=device))
     model.to(device)
     model.eval()
@@ -50,9 +48,8 @@ def get_test_transform(input_size: int) -> transforms.Compose:
     ])
 
 
-def classify_crops(crops, transform, model, device):
-    """Classify a list of BGR crop arrays. Returns counts per class."""
-    counts = [0, 0, 0]
+def classify_crops(crops, transform, model, device, num_classes):
+    counts = [0] * num_classes
     if not crops:
         return counts
 
@@ -76,34 +73,31 @@ def main():
     device = get_device()
     print(f"Device: {device}")
 
+    class_names = config["classes"]
+    num_classes = len(class_names)
     confidence = config["pipeline"]["detection_confidence_threshold"]
     input_size = config["model"]["classifier_input_size"]
 
     detector_path = project_root / config["model"]["detector"]
     detector = YOLO(str(detector_path))
 
-    weights_path = project_root / "src" / "models" / "best_baseline.pth"
-    classifier = build_classifier(weights_path, num_classes=len(CLASS_NAMES), device=device)
+    weights_path = project_root / "src" / "models" / "best_resnet18.pth"
+    classifier = build_classifier(weights_path, num_classes=num_classes, device=device)
     transform = get_test_transform(input_size)
 
     frames_dir = project_root / config["data"]["extracted_frames_dir"]
-    val_test_stems = [Path(v).stem for v in config["split"]["val_test_video"]]
 
     all_frames = sorted(frames_dir.glob("*.jpg"))
-    target_frames = [f for f in all_frames if any(f.name.startswith(s) for s in val_test_stems)]
-
-    if not target_frames:
-        print(f"No frames found for val_test videos {val_test_stems}")
+    if not all_frames:
+        print(f"No frames found in {frames_dir}")
         return
 
-    print(f"Processing {len(target_frames)} frames from {val_test_stems}")
+    print(f"Processing {len(all_frames)} frames")
 
     frame_indices = []
-    oriented_counts = []
-    diverted_counts = []
-    obscured_counts = []
+    per_class_counts = {cls: [] for cls in class_names}
 
-    for idx, frame_path in enumerate(tqdm(target_frames, desc="Telemetry inference")):
+    for idx, frame_path in enumerate(tqdm(all_frames, desc="Telemetry inference")):
         image = cv2.imread(str(frame_path))
         if image is None:
             continue
@@ -123,52 +117,59 @@ def main():
                     continue
                 crops.append(image[y1:y2, x1:x2])
 
-        counts = classify_crops(crops, transform, classifier, device)
+        counts = classify_crops(crops, transform, classifier, device, num_classes)
 
         frame_indices.append(idx)
-        oriented_counts.append(counts[0])
-        diverted_counts.append(counts[1])
-        obscured_counts.append(counts[2])
+        for i, cls in enumerate(class_names):
+            per_class_counts[cls].append(counts[i])
 
-    df = pd.DataFrame({
-        "frame_index": frame_indices,
-        "oriented": oriented_counts,
-        "diverted": diverted_counts,
-        "obscured": obscured_counts,
-    })
+    df_data = {"frame_index": frame_indices}
+    df_data.update(per_class_counts)
+    df = pd.DataFrame(df_data)
 
-    df["Engagement_Ratio"] = df["oriented"] / (df["oriented"] + df["diverted"] + 0.0001)
-    df["Smoothed_Engagement"] = df["Engagement_Ratio"].rolling(window=5, min_periods=1).mean()
+    total_per_frame = df[class_names].sum(axis=1).replace(0, 1)
+    for cls in class_names:
+        df[f"{cls}_ratio"] = df[cls] / total_per_frame
 
-    print(f"\nTelemetry summary:")
-    print(f"  Frames processed : {len(df)}")
-    print(f"  Mean engagement  : {df['Engagement_Ratio'].mean():.3f}")
-    print(f"  Min engagement   : {df['Engagement_Ratio'].min():.3f}")
-    print(f"  Max engagement   : {df['Engagement_Ratio'].max():.3f}")
+    print("\nTelemetry summary:")
+    print(f"  Frames processed: {len(df)}")
+    for cls in class_names:
+        mean_ratio = df[f"{cls}_ratio"].mean()
+        print(f"  Mean {cls} ratio: {mean_ratio:.3f}")
 
     sns.set_style("whitegrid")
-    fig, ax = plt.subplots(figsize=(14, 5))
+    fig, axes = plt.subplots(2, 1, figsize=(14, 9), sharex=True)
 
-    ax.plot(
-        df["frame_index"], df["Engagement_Ratio"],
-        color="steelblue", alpha=0.3, linewidth=1, label="Raw Engagement",
-    )
-    ax.plot(
-        df["frame_index"], df["Smoothed_Engagement"],
-        color="steelblue", linewidth=2.5, label="Smoothed (window=5)",
-    )
+    colors = ["#95a5a6", "#e67e22", "#2ecc71", "#f1c40f", "#e74c3c"]
 
-    ax.set_title("Classroom Engagement Telemetry over Time", fontsize=14, fontweight="bold")
-    ax.set_xlabel("Frame Index (chronological)")
-    ax.set_ylabel("Engagement Ratio (oriented / engaged)")
-    ax.set_ylim(-0.05, 1.05)
-    ax.legend(loc="lower right")
+    for i, cls in enumerate(class_names):
+        axes[0].plot(
+            df["frame_index"], df[cls],
+            color=colors[i % len(colors)], linewidth=1.2, label=cls, alpha=0.8,
+        )
+    axes[0].set_title("Reaction Counts per Frame", fontsize=13, fontweight="bold")
+    axes[0].set_ylabel("Count")
+    axes[0].legend(loc="upper right", fontsize=9)
+
+    for i, cls in enumerate(class_names):
+        smoothed = df[f"{cls}_ratio"].rolling(window=5, min_periods=1).mean()
+        axes[1].plot(
+            df["frame_index"], smoothed,
+            color=colors[i % len(colors)], linewidth=2, label=cls,
+        )
+    axes[1].set_title("Smoothed Reaction Distribution over Time", fontsize=13, fontweight="bold")
+    axes[1].set_xlabel("Frame Index (chronological)")
+    axes[1].set_ylabel("Proportion")
+    axes[1].set_ylim(-0.05, 1.05)
+    axes[1].legend(loc="upper right", fontsize=9)
+
+    fig.suptitle("Classroom Reaction Telemetry", fontsize=14, fontweight="bold")
 
     results_dir = project_root / "results"
     results_dir.mkdir(exist_ok=True)
 
     save_path = results_dir / "classroom_telemetry_dashboard.png"
-    fig.tight_layout()
+    fig.tight_layout(rect=[0, 0, 1, 0.96])
     fig.savefig(str(save_path), dpi=150)
     plt.close(fig)
     print(f"Dashboard saved to: {save_path}")
