@@ -29,11 +29,16 @@ def get_device() -> torch.device:
 
 def build_transforms(input_size: int) -> tuple:
     train_tf = transforms.Compose([
-        transforms.Resize((input_size, input_size)),
+        transforms.RandomResizedCrop(input_size, scale=(0.7, 1.0)),
         transforms.RandomHorizontalFlip(p=0.5),
-        transforms.ColorJitter(brightness=0.2, contrast=0.2),
+        transforms.RandomRotation(15),
+        transforms.ColorJitter(
+            brightness=0.3, contrast=0.3, saturation=0.2, hue=0.1,
+        ),
+        transforms.RandomGrayscale(p=0.05),
         transforms.ToTensor(),
         transforms.Normalize(mean=IMAGENET_MEAN, std=IMAGENET_STD),
+        transforms.RandomErasing(p=0.2),
     ])
     val_tf = transforms.Compose([
         transforms.Resize((input_size, input_size)),
@@ -58,6 +63,10 @@ def build_resnet18(num_classes: int, device: torch.device) -> nn.Module:
     model = models.resnet18(weights=models.ResNet18_Weights.IMAGENET1K_V1)
     for param in model.parameters():
         param.requires_grad = False
+    for param in model.layer3.parameters():
+        param.requires_grad = True
+    for param in model.layer4.parameters():
+        param.requires_grad = True
     model.fc = nn.Linear(model.fc.in_features, num_classes)
     return model.to(device)
 
@@ -66,7 +75,11 @@ def build_vgg16(num_classes: int, device: torch.device) -> nn.Module:
     model = models.vgg16(weights=models.VGG16_Weights.IMAGENET1K_V1)
     for param in model.features.parameters():
         param.requires_grad = False
-    model.classifier[6] = nn.Linear(model.classifier[6].in_features, num_classes)
+    for param in model.features[24:].parameters():
+        param.requires_grad = True
+    model.classifier[6] = nn.Linear(
+        model.classifier[6].in_features, num_classes,
+    )
     return model.to(device)
 
 
@@ -126,19 +139,31 @@ def train_model(
     save_path: Path,
     history_path: Path,
 ):
-    optimizer = torch.optim.Adam(
-        filter(lambda p: p.requires_grad, model.parameters()), lr=lr,
+    optimizer = torch.optim.AdamW(
+        filter(lambda p: p.requires_grad, model.parameters()),
+        lr=lr, weight_decay=1e-4,
+    )
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+        optimizer, T_max=epochs, eta_min=1e-6,
     )
     best_val_acc = 0.0
     history = []
 
+    trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    total = sum(p.numel() for p in model.parameters())
     print(f"\n{'='*60}")
     print(f"Training {model_name} for {epochs} epochs")
+    print(f"  Trainable params: {trainable:,} / {total:,}")
     print(f"{'='*60}\n")
 
     for epoch in range(1, epochs + 1):
-        train_loss, train_acc = train_one_epoch(model, train_loader, criterion, optimizer, device)
-        val_loss, val_acc = validate(model, val_loader, criterion, device)
+        train_loss, train_acc = train_one_epoch(
+            model, train_loader, criterion, optimizer, device,
+        )
+        val_loss, val_acc = validate(
+            model, val_loader, criterion, device,
+        )
+        scheduler.step()
 
         tag = ""
         if val_acc > best_val_acc:
@@ -146,8 +171,10 @@ def train_model(
             torch.save(model.state_dict(), str(save_path))
             tag = "  <-- best"
 
+        cur_lr = optimizer.param_groups[0]["lr"]
         print(
             f"Epoch {epoch:02d}/{epochs} | "
+            f"LR: {cur_lr:.6f} | "
             f"Train Loss: {train_loss:.4f}  Acc: {train_acc:.3f} | "
             f"Val Loss: {val_loss:.4f}  Acc: {val_acc:.3f}{tag}"
         )
@@ -156,7 +183,9 @@ def train_model(
 
     with open(history_path, "w", newline="") as f:
         writer = csv.writer(f)
-        writer.writerow(["epoch", "train_loss", "train_acc", "val_loss", "val_acc"])
+        writer.writerow(
+            ["epoch", "train_loss", "train_acc", "val_loss", "val_acc"],
+        )
         writer.writerows(history)
     print(f"Training history saved to: {history_path}")
     print(f"{model_name} complete. Best Val Accuracy: {best_val_acc:.3f}")
@@ -193,7 +222,9 @@ def main():
     val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, num_workers=0)
 
     class_weights = compute_class_weights(train_dataset, device)
-    criterion = nn.CrossEntropyLoss(weight=class_weights)
+    criterion = nn.CrossEntropyLoss(
+        weight=class_weights, label_smoothing=0.1,
+    )
 
     results_dir = project_root / "results"
     results_dir.mkdir(exist_ok=True)
