@@ -20,8 +20,8 @@ model:
   detector: "src/models/yolov8n.pt"
   classifier_input_size: 224
   batch_size: 32
-  epochs: 25
-  learning_rate: 0.0005
+  epochs: 20
+  learning_rate: 0.001
 
 pipeline:
   detection_confidence_threshold: 0.5

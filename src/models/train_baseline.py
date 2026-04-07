@@ -29,16 +29,12 @@ def get_device() -> torch.device:
 
 def build_transforms(input_size: int) -> tuple:
     train_tf = transforms.Compose([
-        transforms.RandomResizedCrop(input_size, scale=(0.7, 1.0)),
+        transforms.RandomResizedCrop(input_size, scale=(0.8, 1.0)),
         transforms.RandomHorizontalFlip(p=0.5),
-        transforms.RandomRotation(15),
-        transforms.ColorJitter(
-            brightness=0.3, contrast=0.3, saturation=0.2, hue=0.1,
-        ),
-        transforms.RandomGrayscale(p=0.05),
+        transforms.RandomRotation(10),
+        transforms.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.1),
         transforms.ToTensor(),
         transforms.Normalize(mean=IMAGENET_MEAN, std=IMAGENET_STD),
-        transforms.RandomErasing(p=0.2),
     ])
     val_tf = transforms.Compose([
         transforms.Resize((input_size, input_size)),
@@ -63,8 +59,6 @@ def build_resnet18(num_classes: int, device: torch.device) -> nn.Module:
     model = models.resnet18(weights=models.ResNet18_Weights.IMAGENET1K_V1)
     for param in model.parameters():
         param.requires_grad = False
-    for param in model.layer3.parameters():
-        param.requires_grad = True
     for param in model.layer4.parameters():
         param.requires_grad = True
     model.fc = nn.Linear(model.fc.in_features, num_classes)
@@ -75,8 +69,6 @@ def build_vgg16(num_classes: int, device: torch.device) -> nn.Module:
     model = models.vgg16(weights=models.VGG16_Weights.IMAGENET1K_V1)
     for param in model.features.parameters():
         param.requires_grad = False
-    for param in model.features[24:].parameters():
-        param.requires_grad = True
     model.classifier[6] = nn.Linear(
         model.classifier[6].in_features, num_classes,
     )
@@ -139,12 +131,11 @@ def train_model(
     save_path: Path,
     history_path: Path,
 ):
-    optimizer = torch.optim.AdamW(
-        filter(lambda p: p.requires_grad, model.parameters()),
-        lr=lr, weight_decay=1e-4,
+    optimizer = torch.optim.Adam(
+        filter(lambda p: p.requires_grad, model.parameters()), lr=lr,
     )
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
-        optimizer, T_max=epochs, eta_min=1e-6,
+    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+        optimizer, mode="max", patience=3, factor=0.5, verbose=True,
     )
     best_val_acc = 0.0
     history = []
@@ -163,7 +154,7 @@ def train_model(
         val_loss, val_acc = validate(
             model, val_loader, criterion, device,
         )
-        scheduler.step()
+        scheduler.step(val_acc)
 
         tag = ""
         if val_acc > best_val_acc:
@@ -222,9 +213,7 @@ def main():
     val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, num_workers=0)
 
     class_weights = compute_class_weights(train_dataset, device)
-    criterion = nn.CrossEntropyLoss(
-        weight=class_weights, label_smoothing=0.1,
-    )
+    criterion = nn.CrossEntropyLoss(weight=class_weights)
 
     results_dir = project_root / "results"
     results_dir.mkdir(exist_ok=True)
