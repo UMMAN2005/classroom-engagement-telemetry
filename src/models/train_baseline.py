@@ -5,7 +5,7 @@ import torch.nn as nn
 from pathlib import Path
 from collections import Counter
 
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, WeightedRandomSampler
 from torchvision import datasets, transforms, models
 from tqdm import tqdm
 
@@ -209,7 +209,12 @@ def main():
     print(f"Train samples: {len(train_dataset)}  |  Val samples: {len(val_dataset)}")
     print(f"Classes: {train_dataset.classes}")
 
-    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=0)
+    targets = torch.tensor(train_dataset.targets)
+    sample_weights = class_weights.cpu()[targets]
+    sampler = WeightedRandomSampler(
+        sample_weights, num_samples=len(train_dataset) * 2, replacement=True,
+    )
+    train_loader = DataLoader(train_dataset, batch_size=batch_size, sampler=sampler, num_workers=0)
     val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, num_workers=0)
 
     class_weights = compute_class_weights(train_dataset, device)
