@@ -28,11 +28,11 @@ from pytorch_grad_cam.utils.image import show_cam_on_image
 
 MODEL_REPO = "ummanmm/classroom-reaction-resnet18"
 CLASSES = [
-    "Neutral",
+    "Bored / Tired",
     "Confused",
+    "Neutral",
     "Smiling / Amused",
     "Surprised",
-    "Bored / Tired",
 ]
 IMAGENET_MEAN = [0.485, 0.456, 0.406]
 IMAGENET_STD = [0.229, 0.224, 0.225]

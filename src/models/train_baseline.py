@@ -209,6 +209,9 @@ def main():
     print(f"Train samples: {len(train_dataset)}  |  Val samples: {len(val_dataset)}")
     print(f"Classes: {train_dataset.classes}")
 
+    class_weights = compute_class_weights(train_dataset, device)
+    criterion = nn.CrossEntropyLoss(weight=class_weights)
+
     targets = torch.tensor(train_dataset.targets)
     sample_weights = class_weights.cpu()[targets]
     sampler = WeightedRandomSampler(
@@ -216,9 +219,6 @@ def main():
     )
     train_loader = DataLoader(train_dataset, batch_size=batch_size, sampler=sampler, num_workers=0)
     val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, num_workers=0)
-
-    class_weights = compute_class_weights(train_dataset, device)
-    criterion = nn.CrossEntropyLoss(weight=class_weights)
 
     results_dir = project_root / "results"
     results_dir.mkdir(exist_ok=True)
