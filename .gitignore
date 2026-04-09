@@ -30,3 +30,9 @@ Thumbs.db
 
 # Gradio cache
 .gradio/
+
+# LaTeX build artifacts
+report/*.aux
+report/*.log
+report/*.out
+report/*.pdf

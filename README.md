@@ -192,6 +192,8 @@ classroom_engagement_telemetry/
 │   ├── EDA_and_Testing.ipynb           # Exploratory data analysis notebook
 │   └── Reaction_Recognition_Colab.ipynb # Google Colab training notebook
 ├── reaction_dataset.zip                # Packaged train/val/test splits for Colab
+├── report/
+│   └── report.tex                      # IEEE-format LaTeX course report
 ├── .github/
 │   └── workflows/
 │       └── ci.yml                      # GitHub Actions lint + smoke test
