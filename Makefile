@@ -1,4 +1,4 @@
-.PHONY: all setup extract-frames crop-students split-data train-baseline evaluate-baseline generate-telemetry generate-gradcam tsne benchmark visualize-video plot-curves diagram publish-model deploy-space
+.PHONY: all setup extract-frames crop-students split-data train-baseline evaluate-baseline generate-telemetry generate-gradcam tsne benchmark visualize-video plot-curves diagram publish-model deploy-space live-demo live-demo-web deploy-live-demo
 
 all: extract-frames crop-students split-data train-baseline evaluate-baseline generate-telemetry generate-gradcam tsne benchmark visualize-video plot-curves
 
@@ -46,3 +46,12 @@ publish-model:
 
 deploy-space:
 	python src/models/create_hf_space.py
+
+live-demo:
+	python src/demo/live_webcam.py
+
+live-demo-web:
+	python src/demo/live_webcam_web.py
+
+deploy-live-demo:
+	gradio deploy --title "Classroom Reaction ResNet18 ONNX Live" --app-file src/demo/live_webcam_web.py

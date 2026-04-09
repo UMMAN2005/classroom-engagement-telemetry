@@ -1,5 +1,11 @@
 # Classroom Reaction Recognition
 
+[![Python 3.10+](https://img.shields.io/badge/Python-3.10%2B-blue?logo=python&logoColor=white)](https://www.python.org/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
+[![ResNet18 Space](https://img.shields.io/badge/%F0%9F%A4%97-ResNet18%20Demo-yellow)](https://huggingface.co/spaces/ummanmm/Classroom-Reaction-ResNet18)
+[![VGG16 Space](https://img.shields.io/badge/%F0%9F%A4%97-VGG16%20Demo-yellow)](https://huggingface.co/spaces/ummanmm/Classroom-Reaction-VGG16)
+[![ONNX Live](https://img.shields.io/badge/%F0%9F%A4%97-ONNX%20Live%20Demo-orange)](https://huggingface.co/spaces/ummanmm/Classroom_Reaction_ResNet18_ONNX_Live)
+
 A deep learning pipeline for recognizing student facial reactions from classroom video using YOLOv8 person detection and comparative transfer learning with ResNet18 and VGG16.
 
 ## Cloud Architecture
@@ -10,7 +16,14 @@ A deep learning pipeline for recognizing student facial reactions from classroom
 
 ## Live Demo
 
-Try the model interactively with Grad-CAM visualization: [Hugging Face Space](https://huggingface.co/spaces/ummanmm/Classroom-Reaction-Demo)
+Try the models interactively with Grad-CAM visualization:
+[ResNet18 Hugging Face Space](https://huggingface.co/spaces/ummanmm/Classroom-Reaction-ResNet18) | [VGG16 Hugging Face Space](https://huggingface.co/spaces/ummanmm/Classroom-Reaction-VGG16)
+
+| ResNet18 | VGG16 |
+|----------|-------|
+| ![ResNet18 Live Test](results/resnet18-hf.png) | ![VGG16 Live Test](results/vgg16-hf.png) |
+
+*Live inference with Grad-CAM attention heatmaps -- ResNet18 classifies a confused student (50% confidence), VGG16 classifies a smiling student (87% confidence).*
 
 ## Pipeline Overview
 
@@ -66,24 +79,56 @@ Or run individual steps:
 | 11   | `make visualize-video`     | Generate annotated demo video with reaction labels              |
 | 12   | `make plot-curves`         | Plot training loss and accuracy curves for both models          |
 | 13   | `make diagram`             | Generate AWS enterprise architecture diagram (requires awsdac)  |
+| 14   | `make live-demo`           | Launch real-time webcam reaction classifier (requires webcam)   |
+| 15   | `make live-demo-web`       | Launch browser-based webcam demo via Gradio (remote-friendly)   |
+| 16   | `make deploy-live-demo`    | Deploy live webcam demo to Hugging Face Spaces                  |
 
 ## Model Evaluation
+
+### Model Comparison
+
+| Model    | Accuracy | Precision | Recall | F1 Score |
+|----------|----------|-----------|--------|----------|
+| ResNet18 | **90.0%** | **90.4%** | **90.0%** | **90.0%** |
+| VGG16    | 87.3%    | 87.9%     | 87.3%  | 87.4%    |
+
+### ONNX Optimization Benchmark
+
+| Runtime    | Latency (ms/crop) | FPS (crops/sec) | Model Size (MB) |
+|------------|-------------------|-----------------|-----------------|
+| PyTorch    | 22.37             | 44.7            | 42.72           |
+| ONNX (CPU) | **7.74**          | **129.3**       | **42.64**       |
+| **Speedup** | **2.89x**        |                 |                 |
+
+*ONNX parity check passed -- outputs match PyTorch within 1e-5 tolerance (max diff: 2.62e-06).*
+
+### Training Curves
 
 ![Training Curves](results/training_curves.png)
 
 *Training and validation loss/accuracy over 15 epochs for ResNet18 and VGG16.*
 
+### Feature Space
+
 ![t-SNE Clusters](results/tsne_clusters.png)
 
 *t-SNE 2D projection of ResNet18 features showing class separability across 5 reaction classes.*
 
-![Confusion Matrix](results/resnet18_confusion_matrix.png)
+### Confusion Matrices
 
-*Per-class confusion matrix on the held-out test set (ResNet18).*
+| ResNet18 | VGG16 |
+|----------|-------|
+| ![ResNet18 Confusion Matrix](results/resnet18_confusion_matrix.png) | ![VGG16 Confusion Matrix](results/vgg16_confusion_matrix.png) |
+
+*Per-class confusion matrices on the held-out test set.*
+
+### Telemetry Dashboard
 
 ![Telemetry Dashboard](results/classroom_telemetry_dashboard.png)
 
 *Temporal reaction distribution dashboard with smoothing window.*
+
+### Grad-CAM Analysis
 
 ![Grad-CAM Analysis](results/gradcam_analysis.png)
 
@@ -121,6 +166,9 @@ classroom_engagement_telemetry/
 │   │   ├── visualize_embeddings.py     # t-SNE feature-space visualization
 │   │   ├── visualize_video.py          # Annotated demo video
 │   │   └── plot_curves.py              # Training loss/accuracy curves
+│   ├── demo/
+│   │   ├── live_webcam.py              # Real-time webcam reaction classifier (local)
+│   │   └── live_webcam_web.py          # Browser-based Gradio webcam demo (remote)
 │   └── docs/
 │       └── aws_architecture.yaml       # AWS enterprise architecture (DAC)
 ├── results/                            # Generated pipeline outputs
@@ -135,8 +183,11 @@ classroom_engagement_telemetry/
 │   ├── history_vgg16.csv
 │   ├── resnet18_test_predictions.csv
 │   ├── vgg16_test_predictions.csv
+│   ├── resnet18-hf.png
+│   ├── vgg16-hf.png
 │   ├── training_curves.png
-│   └── tsne_clusters.png
+│   ├── tsne_clusters.png
+│   └── onnx_benchmark.csv
 ├── notebooks/
 │   ├── EDA_and_Testing.ipynb           # Exploratory data analysis notebook
 │   └── Reaction_Recognition_Colab.ipynb # Google Colab training notebook
@@ -151,6 +202,14 @@ classroom_engagement_telemetry/
 ├── .gitignore
 └── README.md
 ```
+
+## Downloads
+
+| Asset | Description | Link |
+|-------|-------------|------|
+| Dataset (balanced) | Annotated train/val/test splits (reaction_dataset.zip) | [Google Drive](https://drive.google.com/file/d/1Uz7I7_7yCSaI1lpQR3r11W3wEjXlXmIy/view?usp=drive_link) |
+| Dataset (imbalanced) | Original imbalanced splits (reaction_dataset_imbalanced.zip) | [Google Drive](https://drive.google.com/file/d/1HCEZkj4C3tH3O-iZFD8FnY2uQAnzrtxv/view?usp=sharing) |
+| Weights | Pre-trained ResNet18 and VGG16 checkpoints | [Google Drive](https://drive.google.com/drive/folders/1u-lw7NdSnrmrPqCiUVgL3oUvVtb4cfBH?usp=sharing) |
 
 ## Outputs
 
@@ -169,8 +228,11 @@ classroom_engagement_telemetry/
 - `results/classroom_telemetry_dashboard.png` -- Reaction distribution over time
 - `results/gradcam_analysis.png` -- Grad-CAM attention heatmaps
 - `results/tsne_clusters.png` -- t-SNE 2D projection of ResNet18 features
+- `results/resnet18-hf.png` -- ResNet18 live inference screenshot with Grad-CAM heatmap
+- `results/vgg16-hf.png` -- VGG16 live inference screenshot with Grad-CAM heatmap
 - `results/training_curves.png` -- Training curves for both models
 - `results/classroom_demo.mp4` -- Annotated demo video with reaction labels
+- `results/onnx_benchmark.csv` -- ONNX vs PyTorch latency, FPS, size, and parity results
 - `results/aws_enterprise_architecture.png` -- AWS enterprise architecture diagram
 
 ## Architecture Details

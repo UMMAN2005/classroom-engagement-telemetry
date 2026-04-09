@@ -1,3 +1,5 @@
+import types
+import sys
 import time
 import warnings
 import yaml
@@ -5,6 +7,15 @@ import torch
 import torch.nn as nn
 import numpy as np
 from pathlib import Path
+
+if "_bz2" not in sys.modules:
+    try:
+        import _bz2  # noqa: F401
+    except ModuleNotFoundError:
+        _stub = types.ModuleType("_bz2")
+        _stub.BZ2Compressor = None  # type: ignore[attr-defined]
+        _stub.BZ2Decompressor = None  # type: ignore[attr-defined]
+        sys.modules["_bz2"] = _stub
 
 import onnx
 import onnxruntime as ort
@@ -132,6 +143,15 @@ def main():
     speedup = pt_latency / onnx_latency
     size_ratio = pt_size_mb / onnx_size_mb
 
+    torch.manual_seed(0)
+    dummy = torch.randn(1, 3, input_size, input_size)
+    with torch.no_grad():
+        pt_out = model(dummy).numpy()
+    input_name = session.get_inputs()[0].name
+    onnx_out = session.run(None, {input_name: dummy.numpy()})[0]
+    parity_passed = bool(np.allclose(pt_out, onnx_out, atol=1e-5))
+    max_diff = float(np.max(np.abs(pt_out - onnx_out)))
+
     print("\n## CPU Inference Benchmark (ResNet18)\n")
     print(
         f"| {'Runtime':<12} | {'Latency (ms/crop)':>18} "
@@ -151,26 +171,35 @@ def main():
     print(
         f"| {'Speedup':<12} | {speedup:>17.2f}x | {'':>16} | {size_ratio:>15.2f}x |",
     )
-
     print("\n## ONNX Parity Check\n")
-    torch.manual_seed(0)
-    dummy = torch.randn(1, 3, input_size, input_size)
-    with torch.no_grad():
-        pt_out = model(dummy).numpy()
-    input_name = session.get_inputs()[0].name
-    onnx_out = session.run(
-        None,
-        {input_name: dummy.numpy()},
-    )[0]
-    if np.allclose(pt_out, onnx_out, atol=1e-5):
-        print(
-            "ONNX Parity Check PASSED: outputs match PyTorch within 1e-5 tolerance.",
-        )
+    if parity_passed:
+        print("ONNX Parity Check PASSED: outputs match PyTorch within 1e-5 tolerance.")
     else:
-        max_diff = np.max(np.abs(pt_out - onnx_out))
-        print(
-            f"ONNX Parity Check FAILED: max diff = {max_diff:.2e}",
-        )
+        print(f"ONNX Parity Check FAILED: max diff = {max_diff:.2e}")
+
+    import csv
+
+    results_dir = project_root / "results"
+    results_dir.mkdir(exist_ok=True)
+    csv_path = results_dir / "onnx_benchmark.csv"
+
+    with open(csv_path, "w", newline="") as f:
+        writer = csv.writer(f)
+        writer.writerow([
+            "runtime", "latency_ms", "fps", "model_size_mb",
+            "speedup", "parity_passed", "max_diff",
+        ])
+        writer.writerow([
+            "PyTorch", f"{pt_latency:.2f}", f"{pt_fps:.1f}",
+            f"{pt_size_mb:.2f}", "", "", "",
+        ])
+        writer.writerow([
+            "ONNX (CPU)", f"{onnx_latency:.2f}", f"{onnx_fps:.1f}",
+            f"{onnx_size_mb:.2f}", f"{speedup:.2f}",
+            parity_passed, f"{max_diff:.2e}",
+        ])
+
+    print(f"\nBenchmark results saved to {csv_path}")
 
 
 if __name__ == "__main__":

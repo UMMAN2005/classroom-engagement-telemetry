@@ -1,0 +1,3 @@
+runtime,latency_ms,fps,model_size_mb,speedup,parity_passed,max_diff
+PyTorch,22.37,44.7,42.72,,,
+ONNX (CPU),7.74,129.3,42.64,2.89,True,2.62e-06
