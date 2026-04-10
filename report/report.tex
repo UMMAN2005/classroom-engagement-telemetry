@@ -8,13 +8,10 @@
 \usepackage{booktabs}
 \usepackage{url}
 \usepackage{float}
-\usepackage{multirow}
-
-\hyphenation{op-tical net-works semi-conduc-tor}
 
 \begin{document}
 
-\title{Classroom Reaction Recognition Using Comparative Transfer Learning with ResNet18 and VGG16}
+\title{Classroom Reaction Recognition Using Transfer Learning with ResNet18 and VGG16}
 
 \author{%
 \IEEEauthorblockN{Umman Mammadov\textsuperscript{1},
@@ -28,150 +25,71 @@ Baku Higher Oil School (BHOS)\\
 
 % -----------------------------------------------------------------
 \begin{abstract}
-Monitoring student engagement in real time is a long-standing challenge in education technology. We present an end-to-end deep-learning pipeline that extracts frames from classroom video at one frame per second, localizes individuals with YOLOv8-nano, and classifies each crop into one of five facial-reaction classes: Neutral, Confused, Smiling/Amused, Surprised, and Bored/Tired. Two ImageNet-pretrained convolutional architectures---ResNet18 and VGG16---are fine-tuned under identical training protocols that include class-weighted cross-entropy loss, data augmentation, and stratified splitting.
-
-On a held-out test set of 401 manually annotated crops, ResNet18 achieves 90.0\% accuracy (weighted F1 0.900), outperforming VGG16 at 87.3\% (weighted F1 0.874). We supplement classification metrics with Grad-CAM attention maps, t-SNE feature-space embeddings, chronological telemetry dashboards, and per-class confusion matrices. The best model is exported to ONNX, yielding a $2.89\times$ CPU-latency reduction while maintaining numerical parity within $10^{-5}$. Interactive Gradio demos are deployed on Hugging Face Spaces, and a reference AWS architecture illustrates scalable edge-to-cloud deployment.
+We built an end-to-end pipeline that takes raw classroom video, detects students with YOLOv8-nano, and classifies each person's facial reaction into five classes: Neutral, Confused, Smiling/Amused, Surprised, and Bored/Tired. We fine-tuned two pretrained models---ResNet18 and VGG16---and compared them under identical conditions. ResNet18 reached 90.0\% test accuracy (F1 0.900), outperforming VGG16 at 87.3\% (F1 0.874). The best model was exported to ONNX for fast CPU inference ($2.89\times$ speedup) and a reference AWS architecture was designed for scalable deployment.
 \end{abstract}
 
 \begin{IEEEkeywords}
-facial expression recognition, transfer learning, ResNet, VGG, YOLOv8, ONNX, classroom analytics, edge deployment
+facial expression recognition, transfer learning, ResNet, VGG, YOLOv8, ONNX, classroom analytics
 \end{IEEEkeywords}
 
 % -----------------------------------------------------------------
 \section{Introduction}
 
-Understanding how students react during lectures is valuable for both instructors seeking real-time feedback and administrators designing data-driven curricula. Traditional approaches rely on manual observation or periodic surveys, neither of which scales to large cohorts or captures the temporal dynamics of attention and affect~\cite{dewan2019engagement}.
+Understanding how students react during lectures helps instructors get real-time feedback and adjust their teaching. Traditional methods like manual observation or surveys do not scale and miss the moment-to-moment dynamics of student attention.
 
-Recent advances in computer vision have made automated facial expression recognition (FER) feasible with commodity cameras. Deep convolutional neural networks (CNNs) trained on datasets such as FER2013~\cite{goodfellow2013challenges} and AffectNet~\cite{mollahosseini2019affectnet} demonstrate that machines can approach human-level accuracy on posed and spontaneous expressions. However, classroom video poses additional challenges: subjects are at varying distances, partially occluded, illuminated unevenly, and often display subtle rather than exaggerated expressions.
+This project uses computer vision to automate that process. We recorded a real university lecture, detected individual students in each frame, manually labeled their facial reactions, and trained two deep learning models to classify them. The entire pipeline---from raw video to a deployed interactive demo---is automated through a Makefile and runs on consumer-grade CPU hardware.
 
-This work targets \emph{multi-class reaction recognition} from cropped student images extracted from a real university classroom recording. The pipeline is end-to-end: from raw video ingestion through frame extraction, person detection, manual annotation, model training, evaluation, optimization, and deployment. We compare two widely used transfer-learning backbones---ResNet18~\cite{he2016deep} and VGG16~\cite{simonyan2015very}---under identical preprocessing and training protocols, enabling a fair architectural comparison.
-
-Our contributions are summarized as follows:
-\begin{enumerate}
-  \item A documented and reproducible data pipeline covering frame extraction, YOLOv8-nano person detection, manual annotation, and stratified splitting.
-  \item Comparative fine-tuning of ResNet18 and VGG16 with inverse-frequency class weighting, oversampling, and data augmentation.
-  \item Comprehensive evaluation comprising per-class confusion matrices, training curves, Grad-CAM interpretability analysis, and t-SNE feature-space visualization.
-  \item ONNX export and CPU benchmark demonstrating a $2.89\times$ latency reduction.
-  \item A reference AWS architecture for edge inference, streaming analytics, and MLOps retraining.
-  \item Public Gradio-based demos deployed on Hugging Face Spaces for reproducibility.
-\end{enumerate}
-
-% -----------------------------------------------------------------
-\section{Related Work}
-
-\subsection{Facial Expression Recognition}
-Early FER systems relied on hand-crafted descriptors such as Local Binary Patterns and Histogram of Oriented Gradients. Modern approaches use deep CNNs pretrained on large-scale datasets. Goodfellow~et~al.~\cite{goodfellow2013challenges} introduced the FER2013 benchmark, while Mollahosseini~et~al.~\cite{mollahosseini2019affectnet} curated AffectNet with over one million images. In education contexts, engagement and affect have been studied with both RGB and thermal cameras~\cite{dewan2019engagement}, though most prior work focuses on binary engagement (attentive vs.\ inattentive) rather than multi-class reaction taxonomies.
-
-\subsection{Transfer Learning for Small Datasets}
-When labeled data are scarce, transfer learning from ImageNet~\cite{deng2009imagenet} provides a powerful initialization. Yosinski~et~al.~\cite{yosinski2014transfer} showed that lower convolutional layers learn generic edge and texture detectors that transfer well across tasks, while upper layers become increasingly task-specific. Fine-tuning strategies range from training only the classification head to unfreezing one or more convolutional stages, with deeper unfreezing generally improving accuracy at the cost of overfitting risk.
-
-\subsection{Person Detection with YOLO}
-YOLO~\cite{redmon2016you} introduced single-shot detection, enabling real-time localization. Subsequent versions refined accuracy and efficiency; Ultralytics YOLOv8~\cite{jocher2023yolo} offers a family of models from nano to extra-large. In our pipeline, YOLO decouples \emph{where} people are from \emph{what} they express, allowing the classifier to focus on tightly cropped facial and upper-body regions.
-
-\subsection{Model Optimization and Interpretability}
-ONNX~\cite{onnx2019} provides a portable intermediate representation enabling framework-agnostic inference. Graph-level optimizations (operator fusion, constant folding) and specialized runtimes reduce latency, particularly on CPU-only edge devices. For interpretability, Grad-CAM~\cite{selvaraju2017grad} produces class-discriminative heatmaps by weighting feature maps with gradient information, letting practitioners verify that the network attends to semantically meaningful regions.
+We compare ResNet18~\cite{he2016deep} and VGG16~\cite{simonyan2015very} under identical training settings, evaluate them with confusion matrices, Grad-CAM heatmaps, and t-SNE visualizations, export the best model to ONNX for fast inference, and design a reference AWS cloud architecture for production deployment.
 
 % -----------------------------------------------------------------
 \section{Methodology}
 
-\subsection{Data Collection and Preprocessing}
+\subsection{Data Pipeline}
 
-A camera placed in a university classroom (with prior student notification) recorded a one-hour lecture session. Raw \texttt{.mp4} video was downsampled to one frame per second using OpenCV's \texttt{VideoCapture} API, yielding approximately 3\,600 candidate frames. YOLOv8-nano~\cite{jocher2023yolo} was run on each frame with a person-class (class~0) confidence threshold of $0.5$. Detected bounding boxes were cropped and saved as individual JPEG files.
-
-Three annotators then manually sorted the resulting crops into five expression folders (Table~\ref{tab:classes}). Ambiguous or heavily occluded crops were discarded. The final labeled dataset was split in a stratified fashion (random seed~42) into 70\% training (1\,399 images), 10\% validation (200), and 20\% test (401), preserving per-class proportions across all splits (Table~\ref{tab:splits}).
+A camera in a university classroom recorded a one-hour lecture. We extracted frames at one frame per second (~3\,600 frames), ran YOLOv8-nano~\cite{jocher2023yolo} person detection on each frame, and saved the cropped bounding boxes as JPEG files. Three annotators manually sorted the crops into five reaction folders (Table~\ref{tab:classes}). Ambiguous or occluded crops were discarded. The final dataset of 2\,000 images was split into 70\% train (1\,399), 10\% validation (200), and 20\% test (401) with stratified sampling.
 
 \begin{table}[H]
 \centering
-\caption{Reaction classes, folder names, and annotation cues.}
+\caption{Reaction classes and visual cues used for annotation.}
 \label{tab:classes}
 \begin{tabular}{@{}clp{4.8cm}@{}}
 \toprule
-\textbf{Idx} & \textbf{Folder} & \textbf{Visual cues} \\
+\textbf{Idx} & \textbf{Class} & \textbf{Visual cues} \\
 \midrule
-0 & \texttt{Neutral}          & No visible expression \\
-1 & \texttt{Confused}         & Furrowed brow, squinting \\
-2 & \texttt{Smiling\_Amused}  & Visible smile, laughter \\
-3 & \texttt{Surprised}        & Raised eyebrows, open mouth \\
-4 & \texttt{Bored\_Tired}     & Yawning, blank stare, head down \\
+0 & Neutral          & No visible expression \\
+1 & Confused         & Furrowed brow, squinting \\
+2 & Smiling/Amused   & Visible smile, laughter \\
+3 & Surprised        & Raised eyebrows, open mouth \\
+4 & Bored/Tired      & Yawning, blank stare, head down \\
 \bottomrule
 \end{tabular}
 \end{table}
 
-\begin{table}[H]
-\centering
-\caption{Dataset split statistics.}
-\label{tab:splits}
-\begin{tabular}{@{}lccc@{}}
-\toprule
- & \textbf{Train} & \textbf{Val} & \textbf{Test} \\
-\midrule
-Images  & 1\,399 & 200 & 401 \\
-Ratio   & 70\%   & 10\% & 20\% \\
-\bottomrule
-\end{tabular}
-\end{table}
+\subsection{Models and Training}
 
-\subsection{Model Architectures}
+Both models use ImageNet-pretrained weights. For \textbf{ResNet18}, we unfroze the last residual block (\texttt{layer4}) and replaced the classification head with a 5-class linear layer. For \textbf{VGG16}, we froze the entire convolutional backbone and only replaced the final classifier layer.
 
-We compare two well-known CNN families, both initialized with ImageNet-1K pretrained weights from \texttt{torchvision}.
+Both models were trained for 20 epochs with Adam optimizer (lr = 0.001), batch size 32, and $224 \times 224$ input. To handle class imbalance, we used inverse-frequency weighted cross-entropy loss and a \texttt{WeightedRandomSampler} that oversamples minority classes. Data augmentation (random crop, flip, rotation, color jitter) was applied during training. A \texttt{ReduceLROnPlateau} scheduler halved the learning rate after 3 epochs without improvement. The best checkpoint by validation accuracy was kept.
 
-\textbf{ResNet18}~\cite{he2016deep} uses residual (skip) connections that ease gradient flow in deeper networks. We freeze all layers except the final residual block (\texttt{layer4}) and replace the fully connected head with a new \texttt{nn.Linear(512, 5)} layer. Unfreezing \texttt{layer4} allows the model to adapt higher-level feature representations to our domain while keeping earlier, more generic features fixed.
+\subsection{ONNX Export}
 
-\textbf{VGG16}~\cite{simonyan2015very} employs a uniform stack of $3\times3$ convolutions followed by three fully connected layers. We freeze the entire convolutional backbone (\texttt{features}) and replace only the final classifier layer \texttt{classifier[6]} with \texttt{nn.Linear(4096, 5)}. This is a shallower fine-tuning strategy, relying on VGG's pretrained features being sufficiently expressive for our task.
-
-Both models accept $224\times224$ RGB input normalized with ImageNet channel means $[0.485, 0.456, 0.406]$ and standard deviations $[0.229, 0.224, 0.225]$.
-
-\subsection{Training Configuration}
-
-Table~\ref{tab:hparams} summarizes the training hyperparameters, which are shared across both models to ensure a fair comparison.
-
-\begin{table}[H]
-\centering
-\caption{Training hyperparameters (shared by both models).}
-\label{tab:hparams}
-\begin{tabular}{@{}ll@{}}
-\toprule
-\textbf{Parameter} & \textbf{Value} \\
-\midrule
-Optimizer            & Adam \\
-Learning rate        & $0.001$ \\
-LR scheduler         & ReduceLROnPlateau (patience 3, factor 0.5) \\
-Loss                 & CrossEntropyLoss (class-weighted) \\
-Class weights        & $w_c = N / (C \cdot n_c)$ \\
-Sampler              & WeightedRandomSampler ($2\times$ epoch) \\
-Batch size           & 32 \\
-Epochs               & 20 \\
-Input size           & $224 \times 224$ \\
-Random seed          & 42 \\
-\bottomrule
-\end{tabular}
-\end{table}
-
-The loss function uses inverse-frequency class weights $w_c = N / (C \cdot n_c)$ where $N$ is the total number of training samples, $C{=}5$ is the number of classes, and $n_c$ is the count of class $c$. A \texttt{WeightedRandomSampler} draws training mini-batches with replacement, using twice the dataset size as the nominal epoch length to further mitigate class imbalance.
-
-Data augmentation applied during training includes \texttt{RandomResizedCrop} (scale 0.8--1.0), \texttt{RandomHorizontalFlip} ($p{=}0.5$), \texttt{RandomRotation}($\pm10^\circ$), and mild \texttt{ColorJitter} (brightness and contrast $\pm0.2$, saturation $\pm0.1$). Validation and test sets use only deterministic resize and normalization. A \texttt{ReduceLROnPlateau} scheduler monitors validation accuracy and halves the learning rate after three epochs without improvement. The best model checkpoint by validation accuracy is retained for evaluation.
-
-\subsection{ONNX Export and Benchmarking}
-
-To enable efficient deployment on edge devices, the best ResNet18 checkpoint is exported to ONNX format using \texttt{torch.onnx.export} with opset version~17 and a dynamic batch axis. The exported graph is validated with \texttt{onnx.checker.check\_model}. CPU inference latency is benchmarked by running 100 timed forward passes (after 10 warm-up iterations) on single $224\times224$ crops using both PyTorch and ONNX Runtime's \texttt{CPUExecutionProvider}. Numerical parity is verified by comparing output logits with \texttt{numpy.allclose} at a tolerance of $10^{-5}$.
+The best ResNet18 model was exported to ONNX (opset 17) and benchmarked against PyTorch on CPU with 100 forward passes. Numerical parity was verified with \texttt{numpy.allclose} at tolerance $10^{-5}$.
 
 % -----------------------------------------------------------------
 \section{Results}
 
-\subsection{Training Dynamics}
+\subsection{Training Curves}
 
-Fig.~\ref{fig:curves} shows training and validation loss and accuracy over 20 epochs. ResNet18 converges faster, achieving best validation accuracy of 0.92 at epoch~20, compared to VGG16's best of 0.88. ResNet18 training loss drops below 0.02 by epoch~17, while VGG16 plateaus around 0.20, consistent with its shallower fine-tuning (only one linear layer is trainable). Both models exhibit some validation fluctuation, which is expected given the modest validation set size (200 images) and motivates checkpointing by best validation performance rather than using the final epoch.
+Fig.~\ref{fig:curves} shows that ResNet18 converges faster and reaches lower training loss than VGG16. ResNet18's best validation accuracy is 0.92 vs.\ VGG16's 0.88, reflecting the benefit of unfreezing deeper layers.
 
 \begin{figure}[H]
 \centering
 \includegraphics[width=0.88\linewidth]{../results/training_curves.png}
-\caption{Training and validation loss/accuracy for both models over 20 epochs.}
+\caption{Training and validation loss/accuracy over 20 epochs.}
 \label{fig:curves}
 \end{figure}
 
-\subsection{Test-Set Classification Performance}
-
-Table~\ref{tab:metrics} reports test-set metrics. ResNet18 outperforms VGG16 by 2.7 percentage points in accuracy and across all weighted-average aggregates. The performance gap is likely attributable to ResNet18's deeper fine-tuning strategy: unfreezing \texttt{layer4} allows the model to adapt its penultimate feature representations, whereas VGG16 relies entirely on frozen convolutional features.
+\subsection{Test-Set Performance}
 
 \begin{table}[H]
 \centering
@@ -189,45 +107,43 @@ VGG16    & 0.873 & 0.879 & 0.873 & 0.874 \\
 
 \subsection{Confusion Matrices}
 
-Fig.~\ref{fig:cm} shows per-class confusion matrices for both models. Common confusions include Neutral vs.\ Bored/Tired (both involve minimal facial movement) and Confused vs.\ Neutral (subtle brow differences). ResNet18 shows fewer off-diagonal counts overall, particularly for the Surprised and Smiling/Amused classes, where its unfrozen \texttt{layer4} features appear to capture more discriminative cues.
+The most common misclassifications are between Neutral and Bored/Tired (both involve minimal facial movement) and between Confused and Neutral (subtle brow differences). ResNet18 has fewer errors overall.
 
 \begin{figure}[H]
 \centering
 \includegraphics[width=0.49\linewidth]{../results/resnet18_confusion_matrix.png}\hfill
 \includegraphics[width=0.49\linewidth]{../results/vgg16_confusion_matrix.png}
-\caption{Test-set confusion matrices: ResNet18 (left) and VGG16 (right).}
+\caption{Confusion matrices: ResNet18 (left) and VGG16 (right).}
 \label{fig:cm}
 \end{figure}
 
-\subsection{Grad-CAM Interpretability Analysis}
+\subsection{Grad-CAM Analysis}
 
-To verify that the model's decisions are grounded in facial cues rather than spurious background features, we generate Grad-CAM~\cite{selvaraju2017grad} heatmaps from ResNet18's \texttt{layer4[-1]} (Fig.~\ref{fig:gradcam}). For correctly classified ``Confused'' crops, the heatmap concentrates on the brow and eye region---consistent with the furrowed-brow annotation cue. For misclassified crops, attention often diffuses to shoulders or background, suggesting that the model relies on positional or contextual shortcuts when facial signal is ambiguous.
+Grad-CAM~\cite{selvaraju2017grad} heatmaps (Fig.~\ref{fig:gradcam}) show where the model looks when making predictions. For correct predictions, attention focuses on the face (brow, eyes). For misclassified crops, attention drifts to the background or shoulders, suggesting the model falls back on contextual shortcuts when the facial signal is weak.
 
 \begin{figure}[H]
 \centering
 \includegraphics[width=0.75\linewidth]{../results/gradcam_analysis.png}
-\caption{Grad-CAM heatmaps: true positive (left) vs.\ false positive (right) on ``Confused.'' The model attends to facial regions for correct predictions.}
+\caption{Grad-CAM heatmaps: correct prediction (left) vs.\ misclassification (right).}
 \label{fig:gradcam}
 \end{figure}
 
-\subsection{Feature-Space Visualization}
+\subsection{t-SNE Feature Visualization}
 
-Fig.~\ref{fig:tsne} displays a two-dimensional t-SNE~\cite{vandermaaten2008tsne} projection of the 512-dimensional features extracted from ResNet18's average pooling layer (before the classification head) on the test set. The five reaction classes form partially separable clusters, with Smiling/Amused and Surprised being the most distinct. Overlap between Neutral, Confused, and Bored/Tired reflects the inherent ambiguity of these low-arousal expressions.
+Fig.~\ref{fig:tsne} projects ResNet18's internal features into 2D using t-SNE~\cite{vandermaaten2008tsne}. Smiling/Amused and Surprised form clear clusters. Neutral, Confused, and Bored/Tired overlap, confirming that these low-arousal expressions are genuinely hard to distinguish.
 
 \begin{figure}[H]
 \centering
 \includegraphics[width=0.68\linewidth]{../results/tsne_clusters.png}
-\caption{t-SNE of ResNet18 test-set features (five reaction classes).}
+\caption{t-SNE of ResNet18 test-set features.}
 \label{fig:tsne}
 \end{figure}
 
-\subsection{ONNX CPU Benchmark}
-
-Table~\ref{tab:onnx} compares PyTorch and ONNX Runtime inference on CPU. The ONNX model achieves $2.89\times$ lower latency (7.74~ms vs.\ 22.37~ms per crop) while maintaining the same model size ($\sim$42.7~MB). The maximum absolute difference between PyTorch and ONNX logits is $2.62 \times 10^{-6}$, well within the $10^{-5}$ parity threshold. At 129.3 crops per second, the ONNX model comfortably supports real-time processing of a classroom with 20--30 detected persons per frame at 1~FPS.
+\subsection{ONNX Benchmark}
 
 \begin{table}[H]
 \centering
-\caption{ResNet18 inference: PyTorch vs.\ ONNX Runtime (CPU).}
+\caption{ResNet18: PyTorch vs.\ ONNX Runtime on CPU.}
 \label{tab:onnx}
 \begin{tabular}{@{}lccc@{}}
 \toprule
@@ -239,45 +155,56 @@ ONNX (CPU) & \textbf{7.74} & \textbf{129.3} & 42.64 \\
 \end{tabular}
 \end{table}
 
-\subsection{Temporal Telemetry Dashboard}
+ONNX Runtime is $2.89\times$ faster than PyTorch on CPU. At 129 crops/second, this comfortably handles a classroom of 20--30 students at 1 FPS.
 
-Beyond per-image classification, we demonstrate a chronological telemetry view (Fig.~\ref{fig:telemetry}). The pipeline runs YOLO detection and ResNet18 classification on every extracted frame in temporal order, recording per-frame counts and proportions for each reaction class. A five-frame rolling mean smooths the proportions, revealing macro-level shifts---for example, a sustained rise in Confused counts may correlate with a difficult topic segment.
+\subsection{Telemetry Dashboard}
+
+The pipeline also generates a temporal view (Fig.~\ref{fig:telemetry}) showing how reaction proportions change across the lecture, smoothed with a rolling average. Sustained rises in Confused counts can flag difficult topic segments.
 
 \begin{figure}[H]
 \centering
 \includegraphics[width=0.88\linewidth]{../results/classroom_telemetry_dashboard.png}
-\caption{Temporal reaction telemetry across a lecture session.}
+\caption{Reaction telemetry across a lecture session.}
 \label{fig:telemetry}
 \end{figure}
 
 % -----------------------------------------------------------------
-\section{Cloud and System Architecture}
+\section{Cloud Architecture}
 
-To bridge the gap from a research prototype to a scalable deployment, we designed a reference enterprise architecture on AWS (Fig.~\ref{fig:aws}). The system is organized around three functional paths:
+We designed a reference AWS architecture (Fig.~\ref{fig:aws}) for scaling the system to multiple classrooms:
 
-\textbf{Edge inference.} An AWS Greengrass-enabled device in each classroom runs the ONNX model on locally captured frames. Only lightweight JSON payloads (timestamps, class probabilities, person counts) are transmitted upstream, minimizing bandwidth and preserving privacy by keeping raw video on-device.
+\textbf{Edge:} AWS Greengrass runs the ONNX model on-device. Only JSON telemetry is sent upstream---raw video stays local for privacy.
 
-\textbf{Hot path (real-time).} Inference results flow through AWS IoT Core into Kinesis Data Firehose, which streams data into Amazon Timestream---a purpose-built time-series database. Grafana dashboards query Timestream for live classroom reaction distributions. CloudWatch Alarms trigger AWS Lambda functions for automated notifications (e.g., sustained high confusion levels).
+\textbf{Real-time (hot path):} IoT Core $\to$ Kinesis Firehose $\to$ Amazon Timestream. Grafana dashboards show live reaction distributions. CloudWatch Alarms trigger Lambda for automated alerts.
 
-\textbf{Cold path (historical).} Firehose simultaneously lands raw JSON in Amazon S3, partitioned by date and classroom. Amazon Athena provides serverless SQL analytics over this archive, enabling university researchers to run ad-hoc queries across semesters without provisioning infrastructure.
+\textbf{Historical (cold path):} Firehose also lands JSON logs in S3. Amazon Athena lets researchers run SQL queries over semesters of data without provisioning servers.
 
-\textbf{MLOps retraining.} Amazon SageMaker pulls accumulated training data from S3, retrains classifiers to counteract data and concept drift, and pushes updated ONNX weights back to edge devices via Greengrass over-the-air (OTA) updates. AWS KMS provides customer-managed encryption keys for all data at rest in S3 and Timestream.
+\textbf{MLOps:} SageMaker retrains models on accumulated S3 data and pushes updated ONNX weights back to edge devices via Greengrass OTA. AWS KMS encrypts all data at rest for FERPA/GDPR compliance.
 
 \begin{figure}[H]
 \centering
 \includegraphics[width=\linewidth]{../results/aws_enterprise_architecture.png}
-\caption{Reference AWS architecture: Greengrass edge inference, dual hot/cold analytics (Timestream + Athena), and SageMaker retraining loop.}
+\caption{AWS architecture: edge inference, dual hot/cold analytics, and SageMaker retraining loop.}
 \label{fig:aws}
 \end{figure}
 
 % -----------------------------------------------------------------
-\section{Conclusion and Future Work}
+\section{Challenges and Lessons Learned}
 
-We presented an end-to-end pipeline for multi-class student reaction recognition from classroom video. Under identical preprocessing and training protocols, ResNet18 achieved 90.0\% test accuracy with a weighted F1 of 0.900, outperforming VGG16 (87.3\%, F1 0.874). The advantage is attributable to ResNet18's deeper fine-tuning strategy, which adapts higher-level features to the target domain. ONNX export reduced CPU inference latency by $2.89\times$ without sacrificing numerical fidelity, enabling real-time processing of classroom-scale person counts.
+\textbf{Small dataset from a single source.} With only 2\,000 crops from one classroom, the models risk learning scene-specific cues (backgrounds, seating) instead of generalizable facial features. The t-SNE overlap between low-arousal classes confirms this limitation.
 
-Grad-CAM analysis confirmed that correct predictions attend to facial regions, while t-SNE embeddings revealed interpretable cluster structure aligned with class semantics. The temporal telemetry dashboard demonstrated how per-frame classification can be aggregated into actionable instructor feedback.
+\textbf{Annotation subjectivity.} The boundary between Neutral and Bored/Tired, or Neutral and Confused, is genuinely ambiguous. We discarded unclear crops, but did not compute formal inter-annotator agreement, so label noise likely affected both training and evaluation.
 
-Several directions remain for future work. First, the label taxonomy could be extended beyond five classes to include finer-grained states (e.g., focused writing, phone use). Second, temporal models such as LSTMs or Transformers over frame sequences could capture expression dynamics rather than treating each crop independently. Third, attention-based backbones (e.g., Vision Transformers) and self-supervised pretraining on unlabeled classroom footage could improve accuracy on subtle expressions. Finally, any real-world deployment must undergo rigorous privacy review, informed consent processes, and bias auditing across demographic groups.
+\textbf{Class imbalance.} Neutral and Smiling/Amused dominated the dataset. We addressed this with weighted loss and oversampling, which improved minority-class recall substantially, but Surprised and Confused still had lower recall than majority classes. No single technique fully solved the imbalance---combining weighted loss, oversampling, and augmentation together gave the best results.
+
+\textbf{Fine-tuning depth matters.} ResNet18 (with \texttt{layer4} unfrozen) consistently outperformed VGG16 (classifier-only). This shows that for domain-specific tasks, adapting deeper feature layers is worth the overfitting risk when the dataset is small but augmented.
+
+\textbf{Evaluation beyond accuracy.} Confusion matrices revealed the Neutral/Bored confusion that overall accuracy hid. Grad-CAM showed the model sometimes attends to background instead of faces. t-SNE showed which classes genuinely overlap in feature space. Each visualization tool revealed something that a single accuracy number could not.
+
+% -----------------------------------------------------------------
+\section{Conclusion}
+
+We built a complete pipeline for classifying student reactions from classroom video. ResNet18 achieved 90.0\% accuracy, outperforming VGG16 (87.3\%) due to deeper fine-tuning. ONNX export made inference $2.89\times$ faster on CPU. The main limitations are the small, single-source dataset and the inherent ambiguity of subtle expressions. Future work could add temporal modeling (LSTM/Transformer over frame sequences), collect data from multiple classrooms, and use Vision Transformers for better accuracy on subtle expressions.
 
 \section*{Acknowledgment}
 
@@ -285,41 +212,20 @@ This report was prepared for the course \emph{AI and ML Fundamentals} at Baku Hi
 
 \begin{thebibliography}{00}
 
-\bibitem{dewan2019engagement}
-M.~A.~A. Dewan, M. Murshed, and F. Lin, ``Engagement detection in online learning: A review,'' \emph{Smart Learning Environments}, vol.~6, no.~1, pp.~1--20, 2019.
-
-\bibitem{goodfellow2013challenges}
-I.~J. Goodfellow et al., ``Challenges in representation learning: A report on three machine learning contests,'' in \emph{Proc.\ Int.\ Conf.\ Neural Information Processing}, 2013, pp.~117--124.
-
-\bibitem{mollahosseini2019affectnet}
-A.~Mollahosseini, B.~Hasani, and M.~H. Mahoor, ``AffectNet: A database for facial expression, valence, and arousal computing in the wild,'' \emph{IEEE Trans.\ Affective Computing}, vol.~10, no.~1, pp.~18--31, 2019.
-
-\bibitem{deng2009imagenet}
-J.~Deng, W.~Dong, R.~Socher, L.-J. Li, K.~Li, and L.~Fei-Fei, ``ImageNet: A large-scale hierarchical image database,'' in \emph{Proc.\ IEEE CVPR}, 2009, pp.~248--255.
-
-\bibitem{yosinski2014transfer}
-J.~Yosinski, J.~Clune, Y.~Bengio, and H.~Lipson, ``How transferable are features in deep neural networks?'' in \emph{Advances in Neural Information Processing Systems}, vol.~27, 2014.
-
 \bibitem{he2016deep}
 K.~He, X.~Zhang, S.~Ren, and J.~Sun, ``Deep residual learning for image recognition,'' in \emph{Proc.\ IEEE CVPR}, 2016, pp.~770--778.
 
 \bibitem{simonyan2015very}
 K.~Simonyan and A.~Zisserman, ``Very deep convolutional networks for large-scale image recognition,'' in \emph{Proc.\ ICLR}, 2015.
 
-\bibitem{redmon2016you}
-J.~Redmon, S.~Divvala, R.~Girshick, and A.~Farhadi, ``You only look once: Unified, real-time object detection,'' in \emph{Proc.\ IEEE CVPR}, 2016, pp.~779--788.
-
 \bibitem{jocher2023yolo}
 G.~Jocher, A.~Chaurasia, and J.~Qiu, ``Ultralytics YOLOv8,'' 2023. [Online]. Available: \url{https://github.com/ultralytics/ultralytics}
 
-\bibitem{onnx2019}
-ONNX Community, ``Open Neural Network Exchange,'' 2019. [Online]. Available: \url{https://onnx.ai/}
-
 \bibitem{selvaraju2017grad}
-R.~R. Selvaraju, M.~Cogswell, A.~Das, R.~Vedantam, D.~Parikh, and D.~Batra, ``Grad-CAM: Visual explanations from deep networks via gradient-based localization,'' in \emph{Proc.\ IEEE ICCV}, 2017, pp.~618--626.
+R.~R. Selvaraju et al., ``Grad-CAM: Visual explanations from deep networks via gradient-based localization,'' in \emph{Proc.\ IEEE ICCV}, 2017, pp.~618--626.
 
 \bibitem{vandermaaten2008tsne}
-L.~van~der~Maaten and G.~Hinton, ``Visualizing data using t-SNE,'' \emph{Journal of Machine Learning Research}, vol.~9, pp.~2579--2605, 2008.
+L.~van~der~Maaten and G.~Hinton, ``Visualizing data using t-SNE,'' \emph{JMLR}, vol.~9, pp.~2579--2605, 2008.
 
 \end{thebibliography}
 

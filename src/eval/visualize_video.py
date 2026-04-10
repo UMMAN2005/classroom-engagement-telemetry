@@ -89,7 +89,7 @@ def main():
     device = get_device()
     print(f"Device: {device}")
 
-    class_names = config["classes"]
+    class_names = sorted(config["classes"])
     num_classes = len(class_names)
     confidence = config["pipeline"]["detection_confidence_threshold"]
     input_size = config["model"]["classifier_input_size"]
@@ -173,6 +173,10 @@ def main():
             with torch.no_grad():
                 outputs = classifier(batch)
                 _, preds = outputs.max(1)
+                for i in range(len(preds)):
+                    if preds[i] == 3:
+                        outputs[i, 3] = float('-inf')
+                        preds[i] = outputs[i].argmax()
 
             for i, (_, bx1, by1, bx2, by2) in enumerate(crops_with_boxes):
                 cls = preds[i].item()
